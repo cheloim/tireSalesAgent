@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Logs del servidor – Neumáticos Martinez</title>
+  <link rel="stylesheet" href="/dashboard.css" />
+  <style>
+    .terminal-section { flex: 1; }
+    .terminal {
+      background: #0a0c10;
+      font-family: 'Cascadia Code', 'Fira Mono', 'Consolas', monospace;
+      font-size: .78rem;
+      line-height: 1.6;
+      padding: .75rem 1rem;
+      height: calc(100vh - 160px);
+      overflow-y: auto;
+    }
+    .log-line  { white-space: pre-wrap; word-break: break-all; }
+    .log-info  { color: #94a3b8; }
+    .log-warn  { color: #fbbf24; }
+    .log-error { color: #f87171; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-brand">
+      <span class="header-icon">🔧</span>
+      <div>
+        <h1 class="header-title">Neumáticos Martinez</h1>
+        <p class="header-sub">Logs del servidor</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <span class="live-dot" id="live-dot"></span>
+      <span id="last-update" class="last-update">Conectando…</span>
+      <div class="hamburger" id="hamburger" onclick="toggleMenu()">
+        <span></span><span></span><span></span>
+      </div>
+    </div>
+  </header>
+
+  <div class="nav-menu" id="nav-menu">
+    <a class="nav-item" href="/">Dashboard</a>
+    <a class="nav-item active" href="/logs.html">Logs del servidor</a>
+  </div>
+
+  <main class="main">
+    <section class="table-section terminal-section">
+      <h2 class="section-title">
+        Logs en tiempo real
+        <button class="btn-download" style="margin-left:auto" onclick="limpiarTerminal()">Limpiar</button>
+      </h2>
+      <div id="terminal" class="terminal"></div>
+    </section>
+  </main>
+
+  <script src="/logs.js"></script>
+</body>
+</html>

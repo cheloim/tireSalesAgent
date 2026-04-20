@@ -1,0 +1,8 @@
+Ventas:
+
+
+
+Problemas:
+- Agente no puede resolver Problemas.
+    Que problemas:
+        -

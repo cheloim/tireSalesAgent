@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Panel Interno – Neumáticos Martinez</title>
+  <link rel="stylesheet" href="/dashboard.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="header-brand">
+      <span class="header-icon">🔧</span>
+      <div>
+        <h1 class="header-title">Neumáticos Martinez</h1>
+        <p class="header-sub">Panel Interno</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <span class="live-dot" id="live-dot"></span>
+      <span id="last-update" class="last-update">Conectando…</span>
+      <div class="hamburger" id="hamburger" onclick="toggleMenu()">
+        <span></span><span></span><span></span>
+      </div>
+    </div>
+  </header>
+
+  <div class="nav-menu" id="nav-menu">
+    <a class="nav-item active" href="/">Dashboard</a>
+    <a class="nav-item" href="/logs.html">Logs del servidor</a>
+  </div>
+
+  <!-- ── DASHBOARD ── -->
+  <main class="main" id="tab-dashboard">
+    <section class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">Chats activos</div>
+        <div class="metric-value" id="chats-activos">—</div>
+        <div class="metric-sub">últimas 2 hs</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Presupuestos hoy</div>
+        <div class="metric-value" id="presup-hoy">—</div>
+        <div class="metric-sub" id="total-hoy">$—</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Presupuestos semana</div>
+        <div class="metric-value" id="presup-semana">—</div>
+        <div class="metric-sub" id="total-semana">$—</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Agentes activos</div>
+        <div id="agentes-lista" class="agentes-lista">—</div>
+      </div>
+    </section>
+    <section class="table-section">
+      <h2 class="section-title">Chats activos <span class="badge" id="badge-chats">0</span></h2>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Canal</th><th>Agente</th><th>Mensajes</th><th>Última actividad</th></tr></thead>
+          <tbody id="tbody-chats"><tr><td colspan="4" class="empty">Conectando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── VENTAS ── -->
+  <main class="main" id="tab-ventas">
+    <section class="table-section">
+      <h2 class="section-title">Presupuestos confirmados <span class="badge" id="badge-ventas">0</span></h2>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Fecha</th><th>Agente</th><th>Modelo</th><th>Medida</th><th>Cant.</th><th>Total</th><th>Sucursal</th><th>Cliente</th><th></th></tr>
+          </thead>
+          <tbody id="tbody-ventas"><tr><td colspan="8" class="empty">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── LOGS 7 DÍAS ── -->
+  <main class="main" id="tab-logs">
+    <section class="table-section">
+      <h2 class="section-title">Logs últimos 7 días <span class="badge" id="badge-logs">0</span></h2>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Fecha</th><th>Canal</th><th>Agente</th><th>Mensajes</th><th></th></tr></thead>
+          <tbody id="tbody-logs"><tr><td colspan="5" class="empty">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/dashboard.js"></script>
+</body>
+</html>
