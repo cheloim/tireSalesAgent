@@ -74,10 +74,10 @@ function conectarStream() {
 }
 
 // ── Logs 7 días ───────────────────────────────────────────────
-function descargarLog(session_id, btn) {
+function descargarLog(conversation_id, btn) {
   btn.disabled = true;
   const a = document.createElement('a');
-  a.href = `/api/dashboard/descargar-logs?session=${encodeURIComponent(session_id)}`;
+  a.href = `/api/dashboard/descargar-logs?conversation=${encodeURIComponent(conversation_id)}`;
   a.download = '';
   a.click();
   setTimeout(() => { btn.disabled = false; }, 1500);
@@ -98,7 +98,7 @@ async function cargarLogs() {
         <td>${canalBadge(l.canal)}</td>
         <td>${l.agente}</td>
         <td>${l.mensajes}</td>
-        <td><button class="btn-row" onclick="descargarLog('${l.session_id}',this)">↓</button></td>
+        <td><button class="btn-row" onclick="descargarLog('${l.conversation_id}',this)">↓</button></td>
       </tr>`).join('');
   } catch (e) { console.error('logs', e); }
 }
