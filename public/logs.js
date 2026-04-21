@@ -17,7 +17,7 @@ function conectarServerLogs() {
 
   es.onopen = () => {
     dot.classList.add('live');
-    upd.textContent = 'En vivo';
+    upd.textContent = 'Live';
   };
 
   es.onmessage = (e) => {
@@ -35,7 +35,7 @@ function conectarServerLogs() {
 
   es.onerror = () => {
     dot.classList.remove('live');
-    upd.textContent = 'Reconectando…';
+    upd.textContent = 'Reconnecting…';
   };
 }
 

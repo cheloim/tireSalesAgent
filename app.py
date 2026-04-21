@@ -218,7 +218,7 @@ def chat():
             for chunk in procesar_mensaje(mensaje_usuario, historial, session_id, MODELO_LLM, agente):
                 texto_completo.append(chunk)
 
-            respuesta_completa = limpiar_respuesta("".join(texto_completo))
+            respuesta_completa = _expandir_ubicaciones_web(limpiar_respuesta("".join(texto_completo)))
 
             if respuesta_completa:
                 partes = [p.strip() for p in respuesta_completa.split("|||") if p.strip()]
@@ -365,6 +365,15 @@ def notificar_venta_interna(neumatico: dict, cantidad: int, nombre_cliente: str,
 
 def registrar_venta(session_id: str, agente: str, neumatico: dict, cantidad: int, cliente: str, sucursal: str):
     with sqlite3.connect(DB_PATH) as conn:
+        existing = conn.execute("""
+            SELECT id FROM ventas
+            WHERE session_id = ? AND marca = ? AND modelo = ? AND medida = ? AND cantidad = ?
+              AND fecha >= datetime('now', 'localtime', '-5 minutes')
+        """, (session_id, neumatico.get("marca", ""), neumatico.get("modelo", ""),
+              neumatico.get("medida", ""), cantidad)).fetchone()
+        if existing:
+            logger.warning(f"Venta duplicada ignorada [{session_id}]")
+            return
         conn.execute("""
             INSERT INTO ventas (session_id, agente, marca, modelo, medida, cantidad, total, cliente, sucursal)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -498,6 +507,7 @@ def limpiar_respuesta(text: str) -> str:
     text = _HTML_TAG_RE.sub("", text)
     return text.strip()
 
+
 UBICACIONES = {
     "acassuso": {
         "lat": -34.479471, "lng": -58.5073362,
@@ -512,6 +522,14 @@ UBICACIONES = {
         "maps_url":  "https://maps.app.goo.gl/vx2WDyoj72rUe9Ju8",
     },
 }
+
+
+def _expandir_ubicaciones_web(text: str) -> str:
+    for key, loc in UBICACIONES.items():
+        tag = f"<ubicacion>{key}</ubicacion>"
+        repl = f"\n📍 {loc['nombre']}\n{loc['direccion']}\n{loc['maps_url']}"
+        text = re.sub(re.escape(tag), repl, text, flags=re.IGNORECASE)
+    return _UBICACION_RESTO_RE.sub("", text).strip()
 
 
 def tg_send_photo(chat_id: int, modelo: str):
@@ -1013,6 +1031,11 @@ def _metricas_data() -> dict:
             SELECT COUNT(*), COALESCE(SUM(total), 0)
             FROM ventas WHERE fecha >= DATE('now', 'localtime', '-7 days')
         """).fetchone()
+        mes = conn.execute("""
+            SELECT COUNT(*), COALESCE(SUM(total), 0)
+            FROM ventas
+            WHERE fecha >= date('now', 'localtime', 'start of month')
+        """).fetchone()
         agentes_activos = conn.execute("""
             SELECT agente, COUNT(*) as chats
             FROM historiales
@@ -1029,6 +1052,8 @@ def _metricas_data() -> dict:
         "total_hoy":           hoy[1],
         "presupuestos_semana": semana[0],
         "total_semana":        semana[1],
+        "presupuestos_mes":    mes[0],
+        "total_mes":           mes[1],
         "chats_activos":       chats_activos,
         "por_agente":          [{"agente": r[0], "chats": r[1]} for r in agentes_activos],
     }
@@ -1081,6 +1106,38 @@ def dashboard_chats():
 @app.route("/api/dashboard/logs")
 def dashboard_logs():
     return jsonify({"logs": _logs_data()})
+
+
+@app.route("/api/dashboard/chat/<session_id>")
+def dashboard_chat_view(session_id):
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT mensajes, agente, canal, actualizado FROM historiales WHERE session_id = ?",
+            (session_id,)
+        ).fetchone()
+    if not row:
+        return jsonify({"mensajes": [], "agente": "—", "canal": "web", "actualizado": None})
+    try:
+        msgs = json.loads(row[0] or "[]")
+    except Exception:
+        msgs = []
+    return jsonify({"mensajes": msgs, "agente": row[1] or "—", "canal": row[2] or "web", "actualizado": row[3]})
+
+
+@app.route("/api/dashboard/conversation/<conversation_id>")
+def dashboard_conversation_view(conversation_id):
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT mensajes, agente, canal, actualizado FROM conversations WHERE conversation_id = ?",
+            (conversation_id,)
+        ).fetchone()
+    if not row:
+        return jsonify({"mensajes": [], "agente": "—", "canal": "web", "actualizado": None})
+    try:
+        msgs = json.loads(row[0] or "[]")
+    except Exception:
+        msgs = []
+    return jsonify({"mensajes": msgs, "agente": row[1] or "—", "canal": row[2] or "web", "actualizado": row[3]})
 
 
 @app.route("/api/dashboard/ventas")

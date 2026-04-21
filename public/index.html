@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Panel Interno – Neumáticos Martinez</title>
+  <title>Internal Panel – Neumáticos Martinez</title>
   <link rel="stylesheet" href="/dashboard.css" />
 </head>
 <body>
@@ -12,12 +12,12 @@
       <span class="header-icon">🔧</span>
       <div>
         <h1 class="header-title">Neumáticos Martinez</h1>
-        <p class="header-sub">Panel Interno</p>
+        <p class="header-sub">Internal Panel</p>
       </div>
     </div>
     <div class="header-actions">
       <span class="live-dot" id="live-dot"></span>
-      <span id="last-update" class="last-update">Conectando…</span>
+      <span id="last-update" class="last-update">Connecting…</span>
       <div class="hamburger" id="hamburger" onclick="toggleMenu()">
         <span></span><span></span><span></span>
       </div>
@@ -26,70 +26,108 @@
 
   <div class="nav-menu" id="nav-menu">
     <a class="nav-item active" href="/">Dashboard</a>
-    <a class="nav-item" href="/logs.html">Logs del servidor</a>
+    <a class="nav-item" href="/chat">Chat</a>
+    <a class="nav-item" href="/logs.html">Server Logs</a>
   </div>
 
   <!-- ── DASHBOARD ── -->
   <main class="main" id="tab-dashboard">
     <section class="metrics-grid">
       <div class="metric-card">
-        <div class="metric-label">Chats activos</div>
+        <div class="metric-label">Active Chats</div>
         <div class="metric-value" id="chats-activos">—</div>
-        <div class="metric-sub">últimas 2 hs</div>
+        <div class="metric-sub">last 2h</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">Presupuestos hoy</div>
+        <div class="metric-label">Sales today</div>
         <div class="metric-value" id="presup-hoy">—</div>
         <div class="metric-sub" id="total-hoy">$—</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">Presupuestos semana</div>
+        <div class="metric-label">Sales this week</div>
         <div class="metric-value" id="presup-semana">—</div>
         <div class="metric-sub" id="total-semana">$—</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">Agentes activos</div>
+        <div class="metric-label">Sales this month</div>
+        <div class="metric-value" id="presup-mes">—</div>
+        <div class="metric-sub" id="total-mes">$—</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Active agents</div>
         <div id="agentes-lista" class="agentes-lista">—</div>
       </div>
     </section>
     <section class="table-section">
-      <h2 class="section-title">Chats activos <span class="badge" id="badge-chats">0</span></h2>
+      <h2 class="section-title">Active chats <span class="badge" id="badge-chats">0</span></h2>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Canal</th><th>Agente</th><th>Mensajes</th><th>Última actividad</th></tr></thead>
-          <tbody id="tbody-chats"><tr><td colspan="4" class="empty">Conectando…</td></tr></tbody>
+          <thead><tr><th>Channel</th><th>Agent</th><th>Messages</th><th>Last activity</th><th></th></tr></thead>
+          <tbody id="tbody-chats"><tr><td colspan="5" class="empty">Connecting…</td></tr></tbody>
         </table>
       </div>
     </section>
   </main>
 
-  <!-- ── VENTAS ── -->
+  <!-- ── SALES ── -->
   <main class="main" id="tab-ventas">
     <section class="table-section">
-      <h2 class="section-title">Presupuestos confirmados <span class="badge" id="badge-ventas">0</span></h2>
+      <h2 class="section-title">Confirmed sales <span class="badge" id="badge-ventas">0</span></h2>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
-            <tr><th>Fecha</th><th>Agente</th><th>Modelo</th><th>Medida</th><th>Cant.</th><th>Total</th><th>Sucursal</th><th>Cliente</th><th></th></tr>
+            <tr><th>Date</th><th>Agent</th><th>Model</th><th>Size</th><th>Qty</th><th>Total</th><th>Branch</th><th>Client</th><th></th></tr>
           </thead>
-          <tbody id="tbody-ventas"><tr><td colspan="8" class="empty">Cargando…</td></tr></tbody>
+          <tbody id="tbody-ventas"><tr><td colspan="9" class="empty">Loading…</td></tr></tbody>
         </table>
       </div>
     </section>
   </main>
 
-  <!-- ── LOGS 7 DÍAS ── -->
+  <!-- ── LOGS 7 DAYS ── -->
   <main class="main" id="tab-logs">
     <section class="table-section">
-      <h2 class="section-title">Logs últimos 7 días <span class="badge" id="badge-logs">0</span></h2>
+      <h2 class="section-title">Logs last 7 days <span class="badge" id="badge-logs">0</span></h2>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Fecha</th><th>Canal</th><th>Agente</th><th>Mensajes</th><th></th></tr></thead>
-          <tbody id="tbody-logs"><tr><td colspan="5" class="empty">Cargando…</td></tr></tbody>
+          <thead><tr><th>Date</th><th>Channel</th><th>Agent</th><th>Messages</th><th></th></tr></thead>
+          <tbody id="tbody-logs"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
         </table>
       </div>
     </section>
   </main>
+
+  <!-- ── SALE MODAL ── -->
+  <div class="modal-overlay" id="sale-modal-overlay" onclick="cerrarVenta()"></div>
+  <div class="sale-modal" id="sale-modal">
+    <div class="sale-modal-header">
+      <span class="sale-modal-title">Sale detail</span>
+      <div style="display:flex;gap:.4rem;align-items:center">
+        <button class="btn-download" id="sale-modal-download" onclick="descargarVentaActual()">↓ Download</button>
+        <button class="btn-row" onclick="cerrarVenta()">✕</button>
+      </div>
+    </div>
+    <div class="sale-modal-body" id="sale-modal-body"></div>
+  </div>
+
+  <!-- ── CHAT DRAWER ── -->
+  <div class="drawer-overlay" id="drawer-overlay" onclick="cerrarDrawer()"></div>
+  <aside class="chat-drawer" id="chat-drawer">
+    <div class="drawer-header">
+      <div class="drawer-title">
+        <span id="drawer-agente">—</span>
+        <span id="drawer-canal"></span>
+      </div>
+      <div class="drawer-header-actions">
+        <span class="drawer-updated" id="drawer-updated"></span>
+        <button class="btn-download" id="drawer-download" style="display:none" onclick="descargarLogActual()">↓ Download</button>
+        <button class="btn-row" onclick="cerrarDrawer()">✕</button>
+      </div>
+    </div>
+    <div class="drawer-messages" id="drawer-messages">
+      <div class="empty" style="padding:2rem">Select a chat to view</div>
+    </div>
+  </aside>
 
   <script src="/dashboard.js"></script>
 </body>

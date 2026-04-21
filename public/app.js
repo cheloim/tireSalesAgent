@@ -1,18 +1,14 @@
-/* ══════════════════════════════════════════════════════════════
-   Neumáticos Martinez – Frontend JavaScript
-   ══════════════════════════════════════════════════════════════ */
-
-// ── Estado ────────────────────────────────────────────────────
+// ── State ─────────────────────────────────────────────────────
 let enviando = false;
 let abortController = null;
 
-// ── Inicialización ────────────────────────────────────────────
+// ── Init ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   verificarEstado();
   configurarInput();
 });
 
-// ── Verificar estado de Ollama ────────────────────────────────
+// ── Check agent status ────────────────────────────────────────
 async function verificarEstado() {
   const dot  = document.getElementById('status-dot');
   const text = document.getElementById('status-text');
@@ -22,15 +18,15 @@ async function verificarEstado() {
     const data = await res.json();
 
     if (data.ollama_disponible) {
-      dot.className  = 'status-dot status-ok';
+      dot.className    = 'status-dot status-ok';
       text.textContent = 'En línea';
     } else {
-      dot.className  = 'status-dot status-error';
+      dot.className    = 'status-dot status-error';
       text.textContent = 'No disponible';
       mostrarErrorSistema(data.mensaje);
     }
   } catch {
-    dot.className  = 'status-dot status-error';
+    dot.className    = 'status-dot status-error';
     text.textContent = 'Error de conexión';
   }
 }
@@ -38,19 +34,18 @@ async function verificarEstado() {
 function mostrarErrorSistema(mensaje) {
   const chat = document.getElementById('chat-messages');
   const div  = document.createElement('div');
-  div.className = 'message message-bot';
+  div.className = 'msg msg-agent';
   div.innerHTML = `
-    <div class="message-avatar">⚠️</div>
-    <div class="message-body">
-      <div class="message-bubble" style="border-color:#ff6b6b;background:#fff5f5;">
-        <strong>Advertencia del sistema:</strong><br>${mensaje}
+    <div class="msg-body">
+      <div class="msg-bubble" style="border-color:var(--brand);">
+        <strong>Aviso del sistema:</strong><br>${mensaje}
       </div>
     </div>`;
   chat.appendChild(div);
   scrollAbajo();
 }
 
-// ── Configurar input ──────────────────────────────────────────
+// ── Input setup ───────────────────────────────────────────────
 function configurarInput() {
   const input = document.getElementById('user-input');
 
@@ -67,42 +62,37 @@ function configurarInput() {
   });
 }
 
-// ── Enviar sugerencia rápida ──────────────────────────────────
+// ── Send quick suggestion ─────────────────────────────────────
 function enviarSugerencia(texto) {
   const input = document.getElementById('user-input');
   input.value = texto;
   enviarMensaje();
 }
 
-// ── Enviar mensaje principal ──────────────────────────────────
+// ── Send message ──────────────────────────────────────────────
 async function enviarMensaje() {
   const input   = document.getElementById('user-input');
   const mensaje = input.value.trim();
 
   if (!mensaje) return;
 
-  // Si hay un stream activo, cancelarlo
   if (abortController) {
     abortController.abort();
     abortController = null;
     document.querySelectorAll('[id^="typing-"]').forEach(el => el.remove());
   }
 
-  // Ocultar sugerencias después del primer mensaje
   document.getElementById('suggestions').style.display = 'none';
 
-  // Agregar mensaje del usuario
   agregarMensaje(mensaje, 'user');
   input.value = '';
   input.style.height = 'auto';
 
   setEnviando(true);
 
-  // Pausa natural antes de mostrar los puntitos (como si el vendedor viera el mensaje primero)
-  const pausaLectura = 2000 + Math.random() * 2000; // 2–4 segundos
+  const pausaLectura = 2000 + Math.random() * 2000;
   await new Promise(r => setTimeout(r, pausaLectura));
 
-  // Mostrar indicador de escritura
   const idTyping = mostrarTyping();
 
   abortController = new AbortController();
@@ -142,14 +132,9 @@ async function enviarMensaje() {
           quitarTyping(currentTypingId);
           currentTypingId = null;
           agregarMensaje(evento.contenido, 'bot');
-        }
-
-        else if (evento.tipo === 'typing') {
-          // Nuevo indicador entre mensajes
+        } else if (evento.tipo === 'typing') {
           currentTypingId = mostrarTyping();
-        }
-
-        else if (evento.tipo === 'fin') {
+        } else if (evento.tipo === 'fin') {
           if (currentTypingId) quitarTyping(currentTypingId);
           abortController = null;
           setEnviando(false);
@@ -159,31 +144,29 @@ async function enviarMensaje() {
 
   } catch (err) {
     if (err.name === 'AbortError') {
-      // Cancelado por nuevo mensaje del usuario — no mostrar error
       setEnviando(false);
       return;
     }
     quitarTyping(idTyping);
-    agregarMensaje('Perdoná, se me fue la conexión un momento 😅 ¿Me repetís lo que necesitabas?', 'bot');
+    agregarMensaje("Disculpá, se cortó la conexión un momento. ¿Me repetís lo que necesitabas?", 'bot');
     abortController = null;
     setEnviando(false);
   }
 }
 
-// ── Helpers de mensajes ───────────────────────────────────────
+// ── Message helpers ───────────────────────────────────────────
 function agregarMensaje(texto, rol) {
-  const chat   = document.getElementById('chat-messages');
-  const esBot  = rol === 'bot';
-  const div    = document.createElement('div');
-  div.className = `message message-${esBot ? 'bot' : 'user'}`;
+  const chat  = document.getElementById('chat-messages');
+  const esBot = rol === 'bot';
+  const div   = document.createElement('div');
+  div.className = `msg ${esBot ? 'msg-agent' : 'msg-user'}`;
 
-  const hora = new Date().toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' });
+  const hora = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
 
   div.innerHTML = `
-    <div class="message-avatar">${esBot ? '🤖' : '👤'}</div>
-    <div class="message-body">
-      <div class="message-bubble">${formatearTexto(texto)}</div>
-      <span class="message-time">${hora}</span>
+    <div class="msg-body">
+      <div class="msg-bubble">${formatearTexto(texto)}</div>
+      <span class="msg-time">${hora}</span>
     </div>`;
 
   chat.appendChild(div);
@@ -196,11 +179,10 @@ function mostrarTyping() {
   const id   = 'typing-' + Date.now();
   const div  = document.createElement('div');
   div.id        = id;
-  div.className = 'message message-bot';
+  div.className = 'msg msg-agent';
   div.innerHTML = `
-    <div class="message-avatar">🤖</div>
-    <div class="message-body">
-      <div class="message-bubble">
+    <div class="msg-body">
+      <div class="msg-bubble">
         <div class="typing-dots"><span></span><span></span><span></span></div>
       </div>
     </div>`;
@@ -214,21 +196,14 @@ function quitarTyping(id) {
   if (el) el.remove();
 }
 
-
 function formatearTexto(texto) {
   if (!texto) return '';
   return texto
-    // Negrita: **texto**
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    // Cursiva: *texto*
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    // Listas con guión
     .replace(/^- (.+)$/gm, '<li>$1</li>')
-    // Listas numéricas
     .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
-    // Saltos de línea
     .replace(/\n/g, '<br>')
-    // Envolver listas
     .replace(/(<li>.*?<\/li>(\s*<br>)*)+/gs, (m) => `<ul>${m.replace(/<br>/g, '')}</ul>`);
 }
 
@@ -242,12 +217,12 @@ function setEnviando(estado) {
   document.getElementById('send-icon').textContent = estado ? '⏳' : '➤';
 }
 
-// ── Descargar conversación ────────────────────────────────────
+// ── Download conversation ─────────────────────────────────────
 function descargarConversacion() {
   const mensajes = document.querySelectorAll('#chat-messages .message');
   if (mensajes.length === 0) return;
 
-  const fecha = new Date().toLocaleString('es-AR', {
+  const fecha = new Date().toLocaleString('en-US', {
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit'
   }).replace(/[/:,\s]/g, '-').replace(/-+/g, '-');
@@ -259,11 +234,9 @@ function descargarConversacion() {
     const bubble = msg.querySelector('.message-bubble');
     const hora   = msg.querySelector('.message-time');
     if (!bubble) return;
-
-    // Saltar typing indicators
     if (bubble.querySelector('.typing-dots')) return;
 
-    const remitente = esBot ? 'Rodrigo' : 'Vos';
+    const remitente = esBot ? 'Agente' : 'Vos';
     const horaStr   = hora ? hora.textContent : '';
     const contenido = bubble.innerText.trim();
 
@@ -279,24 +252,20 @@ function descargarConversacion() {
   URL.revokeObjectURL(url);
 }
 
-// ── Limpiar chat ──────────────────────────────────────────────
+// ── Clear chat ────────────────────────────────────────────────
 async function limpiarChat() {
-  if (!confirm('¿Desea iniciar una nueva conversación?')) return;
+  if (!confirm('¿Iniciar una nueva conversación?')) return;
 
   try { await fetch('/api/limpiar', { method: 'POST' }); } catch {}
 
   const chat = document.getElementById('chat-messages');
   chat.innerHTML = `
-    <div class="message message-bot">
-      <div class="message-avatar">🤖</div>
-      <div class="message-body">
-        <div class="message-bubble">
-          <p>¡Hola! Soy Rodrigo de Neumáticos Martinez. ¿Qué estás buscando?</p>
-        </div>
-        <span class="message-time">Ahora</span>
+    <div class="msg msg-agent">
+      <div class="msg-body">
+        <div class="msg-bubble"><p>¡Hola! ¿En qué te puedo ayudar hoy?</p></div>
+        <span class="msg-time">Ahora</span>
       </div>
     </div>`;
 
   document.getElementById('suggestions').style.display = 'flex';
-  actualizarCarrito();
 }

@@ -38,6 +38,11 @@ app.use(express.static(path.join(__dirname, 'public'), {
   },
 }));
 
+// ── Named routes ─────────────────────────────────────────────
+app.get('/chat', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'chat.html'));
+});
+
 // ── Fallback → index.html ────────────────────────────────────
 app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

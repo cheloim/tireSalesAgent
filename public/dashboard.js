@@ -12,7 +12,7 @@ function tiempoAtras(fechaStr) {
   if (diff < 60)    return `${diff}s`;
   if (diff < 3600)  return `${Math.floor(diff / 60)}m`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  return new Date(fechaStr).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
+  return new Date(fechaStr).toLocaleDateString('en-US', { day: '2-digit', month: '2-digit' });
 }
 
 function canalBadge(canal) {
@@ -22,29 +22,31 @@ function canalBadge(canal) {
   return `<span class="${cls}">${label}</span>`;
 }
 
-// ── Render métricas ───────────────────────────────────────────
+// ── Render metrics ────────────────────────────────────────────
 function renderMetricas(d) {
   document.getElementById('chats-activos').textContent = d.chats_activos ?? '—';
   document.getElementById('presup-hoy').textContent    = d.presupuestos_hoy ?? '0';
   document.getElementById('total-hoy').textContent     = fmt.format(d.total_hoy ?? 0);
   document.getElementById('presup-semana').textContent = d.presupuestos_semana ?? '0';
   document.getElementById('total-semana').textContent  = fmt.format(d.total_semana ?? 0);
+  document.getElementById('presup-mes').textContent    = d.presupuestos_mes ?? '0';
+  document.getElementById('total-mes').textContent     = fmt.format(d.total_mes ?? 0);
   const lista = document.getElementById('agentes-lista');
   if (d.por_agente?.length) {
     lista.innerHTML = d.por_agente.map(a =>
       `<div class="agente-row"><span class="agente-name">${a.agente}</span><span class="agente-count">${a.chats} chat${a.chats !== 1 ? 's' : ''}</span></div>`
     ).join('');
   } else {
-    lista.textContent = 'Ninguno';
+    lista.textContent = 'None';
   }
 }
 
-// ── Render chats activos ──────────────────────────────────────
+// ── Render active chats ───────────────────────────────────────
 function renderChats(chats) {
   const tbody = document.getElementById('tbody-chats');
   document.getElementById('badge-chats').textContent = chats?.length ?? 0;
   if (!chats?.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="empty">Sin chats activos</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No active chats</td></tr>';
     return;
   }
   tbody.innerHTML = chats.map(c => `
@@ -53,6 +55,7 @@ function renderChats(chats) {
       <td>${c.agente}</td>
       <td>${c.mensajes}</td>
       <td>${tiempoAtras(c.actualizado)}</td>
+      <td><button class="btn-row" onclick="abrirChat('${c.session_id}','${c.agente}','${c.canal}')">👁</button></td>
     </tr>`).join('');
 }
 
@@ -61,35 +64,107 @@ function conectarStream() {
   const dot = document.getElementById('live-dot');
   const upd = document.getElementById('last-update');
   const es  = new EventSource('/api/dashboard/stream');
-  es.onopen    = () => { dot.classList.add('live'); upd.textContent = 'En vivo'; };
+  es.onopen    = () => { dot.classList.add('live'); upd.textContent = 'Live'; };
   es.onmessage = (e) => {
     try {
       const p = JSON.parse(e.data);
       renderMetricas(p.metricas);
       renderChats(p.chats);
-      upd.textContent = 'Actualizado: ' + new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      upd.textContent = 'Updated: ' + new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     } catch (err) { console.error('SSE', err); }
   };
-  es.onerror = () => { dot.classList.remove('live'); upd.textContent = 'Reconectando…'; };
+  es.onerror = () => { dot.classList.remove('live'); upd.textContent = 'Reconnecting…'; };
 }
 
-// ── Logs 7 días ───────────────────────────────────────────────
-function descargarLog(conversation_id, btn) {
-  btn.disabled = true;
+// ── Chat drawer ───────────────────────────────────────────────
+let _drawerSession      = null;
+let _drawerInterval     = null;
+let _drawerConvId       = null; // set when viewing a log (enables download btn)
+
+function _abrirDrawer(agente, canal, convId) {
+  document.getElementById('drawer-agente').textContent = agente;
+  document.getElementById('drawer-canal').innerHTML    = canalBadge(canal);
+  document.getElementById('chat-drawer').classList.add('open');
+  document.getElementById('drawer-overlay').classList.add('open');
+  const dlBtn = document.getElementById('drawer-download');
+  dlBtn.style.display = convId ? '' : 'none';
+  _drawerConvId = convId || null;
+}
+
+function abrirChat(session_id, agente, canal) {
+  if (_drawerInterval) clearInterval(_drawerInterval);
+  _drawerSession = session_id;
+  _abrirDrawer(agente, canal, null);
+  actualizarDrawer();
+  _drawerInterval = setInterval(actualizarDrawer, 3000);
+}
+
+function abrirLog(conversation_id, agente, canal) {
+  if (_drawerInterval) { clearInterval(_drawerInterval); _drawerInterval = null; }
+  _drawerSession = null;
+  _abrirDrawer(agente, canal, conversation_id);
+  _cargarConversacion(conversation_id);
+}
+
+function descargarLogActual() {
+  if (!_drawerConvId) return;
   const a = document.createElement('a');
-  a.href = `/api/dashboard/descargar-logs?conversation=${encodeURIComponent(conversation_id)}`;
+  a.href = `/api/dashboard/descargar-logs?conversation=${encodeURIComponent(_drawerConvId)}`;
   a.download = '';
   a.click();
-  setTimeout(() => { btn.disabled = false; }, 1500);
 }
 
+function cerrarDrawer() {
+  document.getElementById('chat-drawer').classList.remove('open');
+  document.getElementById('drawer-overlay').classList.remove('open');
+  clearInterval(_drawerInterval);
+  _drawerInterval = null;
+  _drawerSession  = null;
+  _drawerConvId   = null;
+}
+
+async function actualizarDrawer() {
+  if (!_drawerSession) return;
+  try {
+    const data = await fetch(`/api/dashboard/chat/${encodeURIComponent(_drawerSession)}`).then(r => r.json());
+    _renderDrawerMsgs(data.mensajes, true);
+    document.getElementById('drawer-updated').textContent =
+      'Updated ' + new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch(e) { console.error('drawer', e); }
+}
+
+async function _cargarConversacion(conversation_id) {
+  try {
+    const data = await fetch(`/api/dashboard/conversation/${encodeURIComponent(conversation_id)}`).then(r => r.json());
+    _renderDrawerMsgs(data.mensajes, false);
+    document.getElementById('drawer-updated').textContent =
+      data.actualizado ? tiempoAtras(data.actualizado) : '';
+  } catch(e) { console.error('log drawer', e); }
+}
+
+function _renderDrawerMsgs(mensajes, autoScroll) {
+  const msgs = document.getElementById('drawer-messages');
+  const wasAtBottom = msgs.scrollHeight - msgs.scrollTop <= msgs.clientHeight + 40;
+  msgs.innerHTML = mensajes.length
+    ? mensajes.map(m => {
+        const isUser = m.role === 'user';
+        return `<div class="drawer-msg ${isUser ? 'drawer-msg-user' : 'drawer-msg-agent'}">
+          <div class="drawer-bubble">${(m.content || '').replace(/\n/g, '<br>')}</div>
+        </div>`;
+      }).join('')
+    : '<div class="empty" style="padding:2rem">No messages</div>';
+  if (autoScroll && wasAtBottom) msgs.scrollTop = msgs.scrollHeight;
+  else if (!autoScroll) msgs.scrollTop = msgs.scrollHeight;
+}
+
+// ── Logs 7 days ───────────────────────────────────────────────
 async function cargarLogs() {
   try {
     const data  = await fetch('/api/dashboard/logs').then(r => r.json());
     const tbody = document.getElementById('tbody-logs');
     document.getElementById('badge-logs').textContent = data.logs?.length ?? 0;
     if (!data.logs?.length) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty">Sin registros</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">No records</td></tr>';
       return;
     }
     tbody.innerHTML = data.logs.map(l => `
@@ -98,19 +173,46 @@ async function cargarLogs() {
         <td>${canalBadge(l.canal)}</td>
         <td>${l.agente}</td>
         <td>${l.mensajes}</td>
-        <td><button class="btn-row" onclick="descargarLog('${l.conversation_id}',this)">↓</button></td>
+        <td><button class="btn-row" onclick="abrirLog('${l.conversation_id}','${l.agente}','${l.canal}')">👁</button></td>
       </tr>`).join('');
   } catch (e) { console.error('logs', e); }
 }
 
-// ── Ventas ────────────────────────────────────────────────────
-function descargarVenta(id, btn) {
-  btn.disabled = true;
+// ── Sales ─────────────────────────────────────────────────────
+let _ventasMap = {};
+let _ventaActualId = null;
+
+function descargarVentaActual() {
+  if (!_ventaActualId) return;
   const a = document.createElement('a');
-  a.href = `/api/dashboard/descargar-ventas?id=${id}`;
+  a.href = `/api/dashboard/descargar-ventas?id=${_ventaActualId}`;
   a.download = '';
   a.click();
-  setTimeout(() => { btn.disabled = false; }, 1500);
+}
+
+function verVenta(id) {
+  const v = _ventasMap[id];
+  if (!v) return;
+  _ventaActualId = id;
+  document.getElementById('sale-modal-body').innerHTML = `
+    <table class="sale-detail-table">
+      <tr><th>Date</th><td>${v.fecha || '—'}</td></tr>
+      <tr><th>Agent</th><td>${v.agente}</td></tr>
+      <tr><th>Product</th><td>${v.marca} ${v.modelo}</td></tr>
+      <tr><th>Size</th><td>${v.medida}</td></tr>
+      <tr><th>Qty</th><td>${v.cantidad}</td></tr>
+      <tr><th>Total</th><td>${fmt.format(v.total)}</td></tr>
+      <tr><th>Branch</th><td>${v.sucursal}</td></tr>
+      <tr><th>Client</th><td>${v.cliente}</td></tr>
+    </table>`;
+  document.getElementById('sale-modal').classList.add('open');
+  document.getElementById('sale-modal-overlay').classList.add('open');
+}
+
+function cerrarVenta() {
+  document.getElementById('sale-modal').classList.remove('open');
+  document.getElementById('sale-modal-overlay').classList.remove('open');
+  _ventaActualId = null;
 }
 
 async function cargarVentas() {
@@ -119,9 +221,11 @@ async function cargarVentas() {
     const tbody = document.getElementById('tbody-ventas');
     document.getElementById('badge-ventas').textContent = data.ventas?.length ?? 0;
     if (!data.ventas?.length) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty">Sin presupuestos confirmados</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="empty">No confirmed sales</td></tr>';
       return;
     }
+    _ventasMap = {};
+    data.ventas.forEach(v => { _ventasMap[v.id] = v; });
     tbody.innerHTML = data.ventas.map(v => `
       <tr>
         <td>${tiempoAtras(v.fecha)}</td>
@@ -132,7 +236,7 @@ async function cargarVentas() {
         <td>${fmt.format(v.total)}</td>
         <td>${v.sucursal}</td>
         <td>${v.cliente}</td>
-        <td><button class="btn-row" onclick="descargarVenta(${v.id},this)">↓</button></td>
+        <td><button class="btn-row" onclick="verVenta(${v.id})">👁</button></td>
       </tr>`).join('');
   } catch (e) { console.error('ventas', e); }
 }
