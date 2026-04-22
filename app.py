@@ -372,6 +372,29 @@ def _enviar_notificacion(texto: str):
                 logger.error(f"Error enviando notificación WA: {e}")
 
 
+def notificar_dot(session_id: str, neumaticos: str = ""):
+    from datetime import datetime
+    fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    if session_id.startswith("wa_"):
+        contacto = session_id[3:]
+    elif session_id.startswith("twilio_"):
+        contacto = session_id[7:]
+    elif session_id.isdigit():
+        contacto = f"Telegram ID {session_id}"
+    else:
+        contacto = "Web (sin teléfono)"
+
+    lineas = filter(None, [
+        "ℹ SOLICITUD DE DOT",
+        f"Motivo:    Solicitud de DOT",
+        f"Neumático: {neumaticos}" if neumaticos else None,
+        f"Contacto:  {contacto}",
+        f"Fecha:     {fecha}",
+    ])
+    _enviar_notificacion("\n".join(lineas))
+
+
 def notificar_escalado(session_id: str, motivo: str, historial: list[dict]):
     from datetime import datetime
     fecha = datetime.now().strftime("%d/%m/%Y %H:%M")

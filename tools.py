@@ -404,6 +404,20 @@ def confirmar_venta(
     }, ensure_ascii=False)
 
 
+def notificar_dot(
+    neumaticos: str = "",
+    session_id: str = "default",
+    **_,
+) -> str:
+    try:
+        from app import notificar_dot as _notificar_dot
+        _notificar_dot(session_id, neumaticos)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Error notificando DOT: {e}")
+    return json.dumps({"notificado": True}, ensure_ascii=False)
+
+
 def escalar_a_humano(
     motivo: str = "",
     session_id: str = "default",
@@ -427,4 +441,5 @@ FUNCIONES_HERRAMIENTAS = {
     "generar_presupuesto": generar_presupuesto,
     "confirmar_venta": confirmar_venta,
     "escalar_a_humano": escalar_a_humano,
+    "notificar_dot": notificar_dot,
 }
