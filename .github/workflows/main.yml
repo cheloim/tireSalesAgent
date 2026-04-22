@@ -33,3 +33,4 @@ jobs:
           git clone "$REPO_URL" "$REPO_DIR"
           cd "$REPO_DIR"
         fi
+        '
