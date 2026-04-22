@@ -52,6 +52,8 @@ app.secret_key = "neumaticos-plus-secret-key-2024"
 # Modelo a usar (configurable)
 MODELO_LLM = MODELO_DEFAULT
 
+_web_debug_mode = False
+
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_API   = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
@@ -215,7 +217,7 @@ def chat():
         texto_completo = []
 
         try:
-            for chunk in procesar_mensaje(mensaje_usuario, historial, session_id, MODELO_LLM, agente):
+            for chunk in procesar_mensaje(mensaje_usuario, historial, session_id, MODELO_LLM, agente, debug=_web_debug_mode):
                 texto_completo.append(chunk)
 
             respuesta_completa = _expandir_ubicaciones_web(limpiar_respuesta("".join(texto_completo)))
@@ -1138,6 +1140,19 @@ def dashboard_conversation_view(conversation_id):
     except Exception:
         msgs = []
     return jsonify({"mensajes": msgs, "agente": row[1] or "—", "canal": row[2] or "web", "actualizado": row[3]})
+
+
+@app.route("/api/debug-session", methods=["GET"])
+def debug_session_status():
+    return jsonify({"debug": _web_debug_mode})
+
+
+@app.route("/api/debug-session", methods=["POST"])
+def debug_session_toggle():
+    global _web_debug_mode
+    _web_debug_mode = not _web_debug_mode
+    logger.warning(f"Web debug mode: {'ON' if _web_debug_mode else 'OFF'}")
+    return jsonify({"debug": _web_debug_mode})
 
 
 @app.route("/api/dashboard/ventas")

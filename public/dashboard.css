@@ -148,6 +148,21 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .canal-web    { color: var(--muted); }
 .canal-twilio { color: #a78bfa; font-weight: 600; }
 
+/* ── DEBUG BUTTON ── */
+.btn-debug {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--muted); border-radius: 6px;
+  width: 28px; height: 28px; font-size: .8rem;
+  cursor: pointer; transition: border-color .15s, color .15s, box-shadow .15s;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.btn-debug:hover { border-color: var(--brand); color: var(--text); }
+.btn-debug.debug-active {
+  border-color: #f59e0b; color: #f59e0b;
+  box-shadow: 0 0 6px #f59e0b55;
+}
+
 /* ── HAMBURGER ── */
 .hamburger {
   display: flex;

@@ -1,6 +1,9 @@
 // ── State ─────────────────────────────────────────────────────
-let enviando = false;
 let abortController = null;
+let _msgQueue   = [];
+let _queueTimer = null;
+let _typingId   = null;
+const QUEUE_DELAY = 3500; // ms to wait before sending buffered messages
 
 // ── Init ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -52,7 +55,7 @@ function configurarInput() {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (!enviando) enviarMensaje();
+      enviarMensaje();
     }
   });
 
@@ -69,31 +72,40 @@ function enviarSugerencia(texto) {
   enviarMensaje();
 }
 
-// ── Send message ──────────────────────────────────────────────
-async function enviarMensaje() {
+// ── Send message — adds to queue, debounced ───────────────────
+function enviarMensaje() {
   const input   = document.getElementById('user-input');
   const mensaje = input.value.trim();
-
   if (!mensaje) return;
 
-  if (abortController) {
-    abortController.abort();
-    abortController = null;
-    document.querySelectorAll('[id^="typing-"]').forEach(el => el.remove());
-  }
-
   document.getElementById('suggestions').style.display = 'none';
-
   agregarMensaje(mensaje, 'user');
   input.value = '';
   input.style.height = 'auto';
 
-  setEnviando(true);
+  // Abort any ongoing SSE stream so the new batch takes over
+  if (abortController) {
+    abortController.abort();
+    abortController = null;
+  }
 
-  const pausaLectura = 2000 + Math.random() * 2000;
-  await new Promise(r => setTimeout(r, pausaLectura));
+  _msgQueue.push(mensaje);
 
-  const idTyping = mostrarTyping();
+  // Show typing indicator while waiting for the queue to flush
+  if (!_typingId) _typingId = mostrarTyping();
+
+  // Reset debounce timer
+  clearTimeout(_queueTimer);
+  _queueTimer = setTimeout(_flushQueue, QUEUE_DELAY);
+}
+
+// ── Flush queue — send all buffered messages as one request ───
+async function _flushQueue() {
+  const mensajes = _msgQueue.splice(0);
+  _queueTimer = null;
+  if (!mensajes.length) return;
+
+  const mensajeCombinado = mensajes.join('\n');
 
   abortController = new AbortController();
 
@@ -101,7 +113,7 @@ async function enviarMensaje() {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mensaje }),
+      body: JSON.stringify({ mensaje: mensajeCombinado }),
       signal: abortController.signal,
     });
 
@@ -110,7 +122,8 @@ async function enviarMensaje() {
     const reader  = res.body.getReader();
     const decoder = new TextDecoder();
     let   buffer  = '';
-    let   currentTypingId = idTyping;
+    let   currentTypingId = _typingId;
+    _typingId = null;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -133,24 +146,21 @@ async function enviarMensaje() {
           currentTypingId = null;
           agregarMensaje(evento.contenido, 'bot');
         } else if (evento.tipo === 'typing') {
+          if (currentTypingId) quitarTyping(currentTypingId);
           currentTypingId = mostrarTyping();
         } else if (evento.tipo === 'fin') {
           if (currentTypingId) quitarTyping(currentTypingId);
           abortController = null;
-          setEnviando(false);
         }
       }
     }
 
   } catch (err) {
-    if (err.name === 'AbortError') {
-      setEnviando(false);
-      return;
-    }
-    quitarTyping(idTyping);
+    if (err.name === 'AbortError') return;
+    if (_typingId) { quitarTyping(_typingId); _typingId = null; }
+    document.querySelectorAll('[id^="typing-"]').forEach(el => el.remove());
     agregarMensaje("Disculpá, se cortó la conexión un momento. ¿Me repetís lo que necesitabas?", 'bot');
     abortController = null;
-    setEnviando(false);
   }
 }
 
@@ -212,11 +222,6 @@ function scrollAbajo() {
   chat.scrollTop = chat.scrollHeight;
 }
 
-function setEnviando(estado) {
-  enviando = estado;
-  document.getElementById('send-icon').textContent = estado ? '⏳' : '➤';
-}
-
 // ── Download conversation ─────────────────────────────────────
 function descargarConversacion() {
   const mensajes = document.querySelectorAll('#chat-messages .message');
@@ -255,6 +260,13 @@ function descargarConversacion() {
 // ── Clear chat ────────────────────────────────────────────────
 async function limpiarChat() {
   if (!confirm('¿Iniciar una nueva conversación?')) return;
+
+  // Cancel any pending queue
+  clearTimeout(_queueTimer);
+  _queueTimer = null;
+  _msgQueue   = [];
+  if (abortController) { abortController.abort(); abortController = null; }
+  if (_typingId) { quitarTyping(_typingId); _typingId = null; }
 
   try { await fetch('/api/limpiar', { method: 'POST' }); } catch {}
 

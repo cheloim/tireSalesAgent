@@ -241,7 +241,29 @@ async function cargarVentas() {
   } catch (e) { console.error('ventas', e); }
 }
 
+// ── Debug mode ────────────────────────────────────────────────
+async function cargarDebugStatus() {
+  try {
+    const d = await fetch('/api/debug-session').then(r => r.json());
+    _setDebugBtn(d.debug);
+  } catch {}
+}
+
+async function toggleDebug() {
+  try {
+    const d = await fetch('/api/debug-session', { method: 'POST' }).then(r => r.json());
+    _setDebugBtn(d.debug);
+  } catch {}
+}
+
+function _setDebugBtn(active) {
+  const btn = document.getElementById('debug-btn');
+  btn.classList.toggle('debug-active', active);
+  btn.title = active ? 'Debug mode ON — click to disable' : 'Debug mode OFF';
+}
+
 // ── Init ──────────────────────────────────────────────────────
 conectarStream();
 cargarVentas();
 cargarLogs();
+cargarDebugStatus();
