@@ -14,7 +14,7 @@ import uuid
 import requests as http
 from flask import Flask, Response, jsonify, request, send_from_directory, session, stream_with_context
 
-from agent import AGENTES, MODELO_DEFAULT, get_prompt_sistema, procesar_mensaje, transcribir_audio, verificar_gemini
+from agent import AGENTES, MODELO_DEFAULT, TEMPERATURA, PROMPT_VERSION, get_prompt_sistema, procesar_mensaje, transcribir_audio, verificar_gemini
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -115,6 +115,17 @@ def _init_db():
         for col, tipo in [("agente", "TEXT"), ("canal", "TEXT")]:
             if col not in cols:
                 conn.execute(f"ALTER TABLE historiales ADD COLUMN {col} {tipo}")
+        cols_conv = {r[1] for r in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+        for col, tipo in [
+            ("modelo", "TEXT"), ("temperatura", "REAL"), ("prompt_version", "TEXT"),
+            ("debug", "INTEGER DEFAULT 0"),
+            ("confianza", "TEXT"), ("contexto", "INTEGER"), ("memoria", "INTEGER"), ("logica_negocio", "TEXT"),
+        ]:
+            if col not in cols_conv:
+                conn.execute(f"ALTER TABLE conversations ADD COLUMN {col} {tipo}")
+        cols_hist = {r[1] for r in conn.execute("PRAGMA table_info(historiales)").fetchall()}
+        if "debug" not in cols_hist:
+            conn.execute("ALTER TABLE historiales ADD COLUMN debug INTEGER DEFAULT 0")
         conn.commit()
 
 _init_db()
@@ -128,38 +139,69 @@ def obtener_historial(session_id: str) -> list[dict]:
         return json.loads(row[0]) if row else []
 
 
-def obtener_conversation_id(session_id: str) -> str | None:
+def obtener_conversation_id(session_id: str) -> str:
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
             "SELECT conversation_id FROM conversations WHERE session_id = ? ORDER BY iniciado DESC LIMIT 1",
             (session_id,)
         ).fetchone()
-    return row[0] if row else None
+    return row[0] if row else str(uuid.uuid4())
 
 
-def guardar_historial(session_id: str, historial: list[dict], canal: str | None = None, conversation_id: str | None = None):
+def guardar_historial(
+    session_id: str,
+    historial: list[dict],
+    canal: str | None = None,
+    conversation_id: str | None = None,
+    modelo: str | None = None,
+    temperatura: float | None = None,
+    prompt_version: str | None = None,
+    debug: bool = False,
+    confianza: str | None = None,
+    contexto: int | None = None,
+    memoria: int | None = None,
+    logica_negocio: str | None = None,
+):
     datos = json.dumps(historial[-40:], ensure_ascii=False)
+    debug_int = 1 if debug else 0
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
-            INSERT INTO historiales (session_id, mensajes, actualizado, canal)
-            VALUES (?, ?, datetime('now', 'localtime'), ?)
+            INSERT INTO historiales (session_id, mensajes, actualizado, canal, debug)
+            VALUES (?, ?, datetime('now', 'localtime'), ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
                 mensajes    = excluded.mensajes,
                 actualizado = excluded.actualizado,
-                canal       = COALESCE(historiales.canal, excluded.canal)
-        """, (session_id, datos, canal))
+                canal       = COALESCE(historiales.canal, excluded.canal),
+                debug       = MAX(historiales.debug, excluded.debug)
+        """, (session_id, datos, canal, debug_int))
         if conversation_id:
             row = conn.execute("SELECT agente FROM historiales WHERE session_id = ?", (session_id,)).fetchone()
             agente_nombre = row[0] if row else None
             conn.execute("""
-                INSERT INTO conversations (conversation_id, session_id, agente, canal, mensajes, iniciado, actualizado)
-                VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+                INSERT INTO conversations
+                    (conversation_id, session_id, agente, canal, mensajes, iniciado, actualizado,
+                     modelo, temperatura, prompt_version, debug,
+                     confianza, contexto, memoria, logica_negocio)
+                VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'), ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(conversation_id) DO UPDATE SET
-                    mensajes    = excluded.mensajes,
-                    actualizado = excluded.actualizado,
-                    agente      = COALESCE(conversations.agente, excluded.agente),
-                    canal       = COALESCE(conversations.canal, excluded.canal)
-            """, (conversation_id, session_id, agente_nombre, canal, datos))
+                    mensajes       = excluded.mensajes,
+                    actualizado    = excluded.actualizado,
+                    agente         = COALESCE(conversations.agente, excluded.agente),
+                    canal          = COALESCE(conversations.canal, excluded.canal),
+                    modelo         = COALESCE(conversations.modelo, excluded.modelo),
+                    temperatura    = COALESCE(conversations.temperatura, excluded.temperatura),
+                    prompt_version = COALESCE(conversations.prompt_version, excluded.prompt_version),
+                    debug          = MAX(conversations.debug, excluded.debug),
+                    confianza      = COALESCE(excluded.confianza, conversations.confianza),
+                    contexto       = COALESCE(excluded.contexto, conversations.contexto),
+                    memoria        = COALESCE(excluded.memoria, conversations.memoria),
+                    logica_negocio = CASE
+                        WHEN conversations.logica_negocio IS NULL THEN excluded.logica_negocio
+                        WHEN excluded.logica_negocio IS NULL THEN conversations.logica_negocio
+                        ELSE conversations.logica_negocio || ',' || excluded.logica_negocio
+                    END
+            """, (conversation_id, session_id, agente_nombre, canal, datos, modelo, temperatura, prompt_version, debug_int,
+                  confianza, contexto, memoria, logica_negocio))
         conn.commit()
 
 
@@ -211,13 +253,14 @@ def chat():
     session_id      = obtener_session_id()
     historial       = obtener_historial(session_id)
     agente          = obtener_o_asignar_agente(session_id)
-    conversation_id = obtener_conversation_id(session_id) if historial else str(uuid.uuid4())
+    conversation_id = obtener_conversation_id(session_id)
 
     def generar():
         texto_completo = []
+        meta = {}
 
         try:
-            for chunk in procesar_mensaje(mensaje_usuario, historial, session_id, MODELO_LLM, agente, debug=_web_debug_mode):
+            for chunk in procesar_mensaje(mensaje_usuario, historial, session_id, MODELO_LLM, agente, debug=_web_debug_mode, meta=meta):
                 texto_completo.append(chunk)
 
             respuesta_completa = _expandir_ubicaciones_web(limpiar_respuesta("".join(texto_completo)))
@@ -248,7 +291,13 @@ def chat():
             if respuesta_completa:
                 historial.append({"role": "user", "content": mensaje_usuario})
                 historial.append({"role": "assistant", "content": respuesta_completa})
-                guardar_historial(session_id, historial, conversation_id=conversation_id)
+                guardar_historial(session_id, historial, conversation_id=conversation_id,
+                                  modelo=MODELO_LLM, temperatura=TEMPERATURA, prompt_version=PROMPT_VERSION,
+                                  debug=_web_debug_mode,
+                                  confianza=meta.get("confianza"),
+                                  contexto=meta.get("contexto"),
+                                  memoria=meta.get("memoria"),
+                                  logica_negocio=",".join(meta.get("logica_negocio") or []) or None)
 
         except GeneratorExit:
             return
@@ -454,10 +503,11 @@ def _procesar_audio_diferido(chat_id: int, file_id: str, session_id: str, modelo
         return
 
     historial       = obtener_historial(session_id)
-    conversation_id = obtener_conversation_id(session_id) if historial else str(uuid.uuid4())
+    conversation_id = obtener_conversation_id(session_id)
     tg_send_typing(chat_id)
+    meta_audio = {}
     try:
-        chunks    = list(procesar_mensaje(text, historial, session_id, modelo))
+        chunks    = list(procesar_mensaje(text, historial, session_id, modelo, meta=meta_audio))
         respuesta = "".join(chunks).strip()
     except Exception as e:
         logger.error(f"Error procesando audio diferido: {e}")
@@ -476,7 +526,12 @@ def _procesar_audio_diferido(chat_id: int, file_id: str, session_id: str, modelo
 
     historial.append({"role": "user",      "content": text})
     historial.append({"role": "assistant", "content": respuesta})
-    guardar_historial(session_id, historial, conversation_id=conversation_id)
+    guardar_historial(session_id, historial, conversation_id=conversation_id,
+                      modelo=MODELO_LLM, temperatura=TEMPERATURA, prompt_version=PROMPT_VERSION,
+                      debug=False,
+                      confianza=meta_audio.get("confianza"), contexto=meta_audio.get("contexto"),
+                      memoria=meta_audio.get("memoria"),
+                      logica_negocio=",".join(meta_audio.get("logica_negocio") or []) or None)
 
 
 IMAGENES_MODELOS = {
@@ -625,16 +680,17 @@ def telegram_webhook():
 
 def _procesar_tg(chat_id: int, session_id: str, text: str):
     historial       = obtener_historial(session_id)
-    conversation_id = obtener_conversation_id(session_id) if historial else str(uuid.uuid4())
+    conversation_id = obtener_conversation_id(session_id)
     agente          = obtener_o_asignar_agente(session_id)
     logger.info(f"TG mensaje procesado [{chat_id}] agente={agente['nombre']}: {text[:300]}")
 
     tg_send_typing(chat_id)
 
     respuesta = ""
+    meta_tg = {}
     for intento in range(4):
         try:
-            chunks    = list(procesar_mensaje(text, historial, session_id, MODELO_LLM, agente))
+            chunks    = list(procesar_mensaje(text, historial, session_id, MODELO_LLM, agente, meta=meta_tg))
             respuesta = limpiar_respuesta("".join(chunks))
             break
         except Exception as e:
@@ -670,7 +726,11 @@ def _procesar_tg(chat_id: int, session_id: str, text: str):
 
     historial.append({"role": "user",      "content": text})
     historial.append({"role": "assistant", "content": respuesta_limpia})
-    guardar_historial(session_id, historial, canal="telegram", conversation_id=conversation_id)
+    guardar_historial(session_id, historial, canal="telegram", conversation_id=conversation_id,
+                      modelo=MODELO_LLM, temperatura=TEMPERATURA, prompt_version=PROMPT_VERSION,
+                      confianza=meta_tg.get("confianza"), contexto=meta_tg.get("contexto"),
+                      memoria=meta_tg.get("memoria"),
+                      logica_negocio=",".join(meta_tg.get("logica_negocio") or []) or None)
 
 
 @app.route("/setup/telegram")
@@ -857,13 +917,14 @@ def whatsapp_webhook():
 
 def _procesar_wa(from_number: str, session_id: str, text: str):
     historial       = obtener_historial(session_id)
-    conversation_id = obtener_conversation_id(session_id) if historial else str(uuid.uuid4())
+    conversation_id = obtener_conversation_id(session_id)
     agente          = obtener_o_asignar_agente(session_id)
 
     respuesta = ""
+    meta_wa = {}
     for intento in range(4):
         try:
-            chunks    = list(procesar_mensaje(text, historial, session_id, MODELO_LLM, agente))
+            chunks    = list(procesar_mensaje(text, historial, session_id, MODELO_LLM, agente, meta=meta_wa))
             respuesta = limpiar_respuesta("".join(chunks))
             break
         except Exception as e:
@@ -890,7 +951,11 @@ def _procesar_wa(from_number: str, session_id: str, text: str):
 
     historial.append({"role": "user",      "content": text})
     historial.append({"role": "assistant", "content": respuesta_limpia})
-    guardar_historial(session_id, historial, canal="whatsapp", conversation_id=conversation_id)
+    guardar_historial(session_id, historial, canal="whatsapp", conversation_id=conversation_id,
+                      modelo=MODELO_LLM, temperatura=TEMPERATURA, prompt_version=PROMPT_VERSION,
+                      confianza=meta_wa.get("confianza"), contexto=meta_wa.get("contexto"),
+                      memoria=meta_wa.get("memoria"),
+                      logica_negocio=",".join(meta_wa.get("logica_negocio") or []) or None)
 
 
 # ── Twilio helpers ────────────────────────────────────────────
@@ -969,13 +1034,14 @@ def twilio_webhook():
 
 def _procesar_twilio(from_number: str, session_id: str, text: str):
     historial       = obtener_historial(session_id)
-    conversation_id = obtener_conversation_id(session_id) if historial else str(uuid.uuid4())
+    conversation_id = obtener_conversation_id(session_id)
     agente          = obtener_o_asignar_agente(session_id)
 
     respuesta = ""
+    meta_twilio = {}
     for intento in range(4):
         try:
-            chunks    = list(procesar_mensaje(text, historial, session_id, MODELO_LLM, agente))
+            chunks    = list(procesar_mensaje(text, historial, session_id, MODELO_LLM, agente, meta=meta_twilio))
             respuesta = limpiar_respuesta("".join(chunks))
             break
         except Exception as e:
@@ -1008,7 +1074,11 @@ def _procesar_twilio(from_number: str, session_id: str, text: str):
 
     historial.append({"role": "user",      "content": text})
     historial.append({"role": "assistant", "content": respuesta_limpia})
-    guardar_historial(session_id, historial, canal="whatsapp", conversation_id=conversation_id)
+    guardar_historial(session_id, historial, canal="whatsapp", conversation_id=conversation_id,
+                      modelo=MODELO_LLM, temperatura=TEMPERATURA, prompt_version=PROMPT_VERSION,
+                      confianza=meta_twilio.get("confianza"), contexto=meta_twilio.get("contexto"),
+                      memoria=meta_twilio.get("memoria"),
+                      logica_negocio=",".join(meta_twilio.get("logica_negocio") or []) or None)
 
 
 # ── Dashboard ────────────────────────────────────────────────
@@ -1064,7 +1134,7 @@ def _metricas_data() -> dict:
 def _chats_data() -> list:
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute("""
-            SELECT session_id, agente, canal, actualizado, mensajes
+            SELECT session_id, agente, canal, actualizado, mensajes, debug
             FROM historiales
             WHERE actualizado >= datetime('now', 'localtime', '-2 hours')
             ORDER BY actualizado DESC LIMIT 50
@@ -1075,13 +1145,15 @@ def _chats_data() -> list:
         "canal":       r[2] or "web",
         "actualizado": r[3],
         "mensajes":    _msg_count(r[4]),
+        "debug":       bool(r[5]),
     } for r in rows]
 
 
 def _logs_data() -> list:
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute("""
-            SELECT conversation_id, session_id, agente, canal, actualizado, mensajes
+            SELECT conversation_id, session_id, agente, canal, actualizado, mensajes,
+                   modelo, temperatura, prompt_version, debug
             FROM conversations
             WHERE actualizado >= datetime('now', 'localtime', '-7 days')
             ORDER BY actualizado DESC LIMIT 200
@@ -1093,6 +1165,10 @@ def _logs_data() -> list:
         "canal":           r[3] or "web",
         "actualizado":     r[4],
         "mensajes":        _msg_count(r[5]),
+        "modelo":          r[6] or "—",
+        "temperatura":     r[7],
+        "prompt_version":  r[8] or "—",
+        "debug":           bool(r[9]),
     } for r in rows]
 
 
@@ -1130,16 +1206,25 @@ def dashboard_chat_view(session_id):
 def dashboard_conversation_view(conversation_id):
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
-            "SELECT mensajes, agente, canal, actualizado FROM conversations WHERE conversation_id = ?",
+            "SELECT mensajes, agente, canal, actualizado, modelo, temperatura, prompt_version, debug FROM conversations WHERE conversation_id = ?",
             (conversation_id,)
         ).fetchone()
     if not row:
-        return jsonify({"mensajes": [], "agente": "—", "canal": "web", "actualizado": None})
+        return jsonify({"mensajes": [], "agente": "—", "canal": "web", "actualizado": None, "modelo": "—", "temperatura": None, "prompt_version": "—", "debug": False})
     try:
         msgs = json.loads(row[0] or "[]")
     except Exception:
         msgs = []
-    return jsonify({"mensajes": msgs, "agente": row[1] or "—", "canal": row[2] or "web", "actualizado": row[3]})
+    return jsonify({
+        "mensajes":       msgs,
+        "agente":         row[1] or "—",
+        "canal":          row[2] or "web",
+        "actualizado":    row[3],
+        "modelo":         row[4] or "—",
+        "temperatura":    row[5],
+        "prompt_version": row[6] or "—",
+        "debug":          bool(row[7]),
+    })
 
 
 @app.route("/api/debug-session", methods=["GET"])
@@ -1237,12 +1322,16 @@ def dashboard_descargar_logs():
     with sqlite3.connect(DB_PATH) as conn:
         if conv_filter:
             rows = conn.execute("""
-                SELECT conversation_id, agente, canal, actualizado, mensajes
+                SELECT conversation_id, agente, canal, actualizado, mensajes,
+                       modelo, temperatura, prompt_version, debug,
+                       confianza, contexto, memoria, logica_negocio
                 FROM conversations WHERE conversation_id = ?
             """, (conv_filter,)).fetchall()
         else:
             rows = conn.execute("""
-                SELECT conversation_id, agente, canal, actualizado, mensajes
+                SELECT conversation_id, agente, canal, actualizado, mensajes,
+                       modelo, temperatura, prompt_version, debug,
+                       confianza, contexto, memoria, logica_negocio
                 FROM conversations
                 WHERE actualizado >= datetime('now', 'localtime', '-7 days')
                 ORDER BY actualizado DESC
@@ -1250,7 +1339,9 @@ def dashboard_descargar_logs():
     buf = io.StringIO()
     sep = "=" * 72
     for r in rows:
-        conv_id, agente, canal, actualizado, mensajes_raw = r
+        conv_id, agente, canal, actualizado, mensajes_raw, \
+            modelo, temperatura, prompt_version, debug, \
+            confianza, contexto, memoria, logica_negocio = r
         try:
             msgs = json.loads(mensajes_raw or "[]")
         except Exception:
@@ -1258,6 +1349,10 @@ def dashboard_descargar_logs():
         buf.write(sep + "\n")
         buf.write(f"CONVERSACIÓN : {conv_id}\n")
         buf.write(f"AGENTE : {agente or '—'}  |  CANAL: {canal or 'web'}  |  FECHA: {actualizado or '—'}\n")
+        debug_str = "  |  DEBUG: SI" if debug else ""
+        buf.write(f"MODELO : {modelo or '—'}  |  TEMP: {temperatura if temperatura is not None else '—'}  |  PROMPT: {prompt_version or '—'}{debug_str}\n")
+        buf.write(f"CONFIANZA : {confianza or '—'}  |  CONTEXTO: {contexto or '—'} tokens  |  MEMORIA: {memoria if memoria is not None else '—'} msgs\n")
+        buf.write(f"LÓGICA    : {logica_negocio or '—'}\n")
         buf.write(sep + "\n")
         for msg in msgs:
             rol       = "Cliente" if msg.get("role") == "user" else (agente or "Agente")

@@ -8,11 +8,12 @@ function toggleMenu() {
 // ── Helpers ───────────────────────────────────────────────────
 function tiempoAtras(fechaStr) {
   if (!fechaStr) return '—';
-  const diff = Math.floor((Date.now() - new Date(fechaStr).getTime()) / 1000);
+  const utc = fechaStr.includes('Z') || fechaStr.includes('+') ? fechaStr : fechaStr.replace(' ', 'T') + 'Z';
+  const diff = Math.floor((Date.now() - new Date(utc).getTime()) / 1000);
   if (diff < 60)    return `${diff}s`;
   if (diff < 3600)  return `${Math.floor(diff / 60)}m`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  return new Date(fechaStr).toLocaleDateString('en-US', { day: '2-digit', month: '2-digit' });
+  return new Date(utc).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
 }
 
 function canalBadge(canal) {
@@ -52,7 +53,7 @@ function renderChats(chats) {
   tbody.innerHTML = chats.map(c => `
     <tr>
       <td>${canalBadge(c.canal)}</td>
-      <td>${c.agente}</td>
+      <td>${c.agente}${c.debug ? ' <span class="badge-debug">debug</span>' : ''}</td>
       <td>${c.mensajes}</td>
       <td>${tiempoAtras(c.actualizado)}</td>
       <td><button class="btn-row" onclick="abrirChat('${c.session_id}','${c.agente}','${c.canal}')">👁</button></td>
@@ -171,7 +172,7 @@ async function cargarLogs() {
       <tr>
         <td>${tiempoAtras(l.actualizado)}</td>
         <td>${canalBadge(l.canal)}</td>
-        <td>${l.agente}</td>
+        <td>${l.agente}${l.debug ? ' <span class="badge-debug">debug</span>' : ''}</td>
         <td>${l.mensajes}</td>
         <td><button class="btn-row" onclick="abrirLog('${l.conversation_id}','${l.agente}','${l.canal}')">👁</button></td>
       </tr>`).join('');
@@ -241,29 +242,8 @@ async function cargarVentas() {
   } catch (e) { console.error('ventas', e); }
 }
 
-// ── Debug mode ────────────────────────────────────────────────
-async function cargarDebugStatus() {
-  try {
-    const d = await fetch('/api/debug-session').then(r => r.json());
-    _setDebugBtn(d.debug);
-  } catch {}
-}
-
-async function toggleDebug() {
-  try {
-    const d = await fetch('/api/debug-session', { method: 'POST' }).then(r => r.json());
-    _setDebugBtn(d.debug);
-  } catch {}
-}
-
-function _setDebugBtn(active) {
-  const btn = document.getElementById('debug-btn');
-  btn.classList.toggle('debug-active', active);
-  btn.title = active ? 'Debug mode ON — click to disable' : 'Debug mode OFF';
-}
-
 // ── Init ──────────────────────────────────────────────────────
 conectarStream();
 cargarVentas();
 cargarLogs();
-cargarDebugStatus();
+setInterval(cargarLogs, 30_000);

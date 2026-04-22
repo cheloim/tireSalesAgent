@@ -148,6 +148,13 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .canal-web    { color: var(--muted); }
 .canal-twilio { color: #a78bfa; font-weight: 600; }
 
+.badge-debug {
+  display: inline-block; font-size: .6rem; font-weight: 700; letter-spacing: .04em;
+  padding: .1em .35em; border-radius: 4px; vertical-align: middle;
+  background: #7c3aed22; color: #a78bfa; border: 1px solid #7c3aed55;
+  text-transform: uppercase;
+}
+
 /* ── DEBUG BUTTON ── */
 .btn-debug {
   background: transparent; border: 1px solid var(--border);

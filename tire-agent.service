@@ -1,0 +1,18 @@
+[Unit]
+Description=Tire Sales Agent (Gunicorn/Flask)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/tire_sales_agent
+EnvironmentFile=/home/ubuntu/tire_sales_agent/.env
+ExecStart=/home/ubuntu/.local/bin/gunicorn -w 1 -k gthread --threads 4 --timeout 300 app:app -b 0.0.0.0:5000
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tire-agent
+
+[Install]
+WantedBy=multi-user.target

@@ -9,7 +9,30 @@ const QUEUE_DELAY = 3500; // ms to wait before sending buffered messages
 document.addEventListener('DOMContentLoaded', () => {
   verificarEstado();
   configurarInput();
+  cargarDebugStatus();
 });
+
+// ── Debug mode ────────────────────────────────────────────────
+async function cargarDebugStatus() {
+  try {
+    const d = await fetch('/api/debug-session').then(r => r.json());
+    _setDebugBtn(d.debug);
+  } catch {}
+}
+
+async function toggleDebug() {
+  try {
+    const d = await fetch('/api/debug-session', { method: 'POST' }).then(r => r.json());
+    _setDebugBtn(d.debug);
+  } catch {}
+}
+
+function _setDebugBtn(active) {
+  const btn = document.getElementById('debug-btn');
+  if (!btn) return;
+  btn.classList.toggle('debug-active', active);
+  btn.title = active ? 'Debug mode ON — click to disable' : 'Debug mode OFF';
+}
 
 // ── Check agent status ────────────────────────────────────────
 async function verificarEstado() {

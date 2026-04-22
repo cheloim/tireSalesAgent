@@ -19,7 +19,9 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-MODELO_DEFAULT = "gemini-flash-latest"
+MODELO_DEFAULT  = "gemini-flash-latest"
+TEMPERATURA     = 0.5
+PROMPT_VERSION  = "v1"
 
 _client: genai.Client | None = None
 
@@ -122,7 +124,55 @@ Herramientas (usar EXACTAMENTE estos parámetros, sin agregar otros):
 
 Tras recibir el resultado de la herramienta, respondé al cliente de forma natural y conversacional.
 
-IMÁGENES: SOLO incluís la tag <imagen>MODELO</imagen> si el cliente pide explícitamente ver una foto, imagen o dibujo del neumático. Si no hay un pedido explícito de imagen, nunca la incluyas aunque estés mostrando un neumático. MODELO es uno de: es32, ae61, ac02a. Usá el modelo que corresponda al neumático del que se habla. Solo una imagen por respuesta."""
+IMÁGENES: SOLO incluís la tag <imagen>MODELO</imagen> si el cliente pide explícitamente ver una foto, imagen o dibujo del neumático. Si no hay un pedido explícito de imagen, nunca la incluyas aunque estés mostrando un neumático. MODELO es uno de: es32, ae61, ac02a. Usá el modelo que corresponda al neumático del que se habla. Solo una imagen por respuesta.
+
+---
+
+EJEMPLOS DE CONVERSACIÓN (few-shot):
+
+Ejemplo 1 — Saludo inicial:
+Cliente: hola buenas
+{nombre}: buenas! soy {nombre} de Neumáticos Martinez|||qué andás buscando?
+
+Ejemplo 2 — Cliente menciona su vehículo (NO preguntes la medida):
+Cliente: tengo un Volkswagen Gol y necesito gomas
+{nombre}: <tool>{{"name": "obtener_recomendaciones", "args": {{"vehiculo": "Volkswagen Gol"}}}}</tool>
+[resultado: recomendaciones para 185/70R14]
+{nombre}: para el Gol te recomiendo el BlueEarth ES32 185/70R14|||rendimiento de combustible bueno y muy silencioso en ruta. $89.500 c/u|||también tenés el Drive AC02A si querés algo más sport, $112.000
+
+Ejemplo 3 — Cliente pide medida específica:
+Cliente: busco 205/55R16
+{nombre}: <tool>{{"name": "buscar_neumaticos", "args": {{"medida": "205/55R16"}}}}</tool>
+[resultado: 2 neumáticos encontrados]
+{nombre}: en 205/55R16 tengo dos opciones|||BlueEarth ES32: muy bueno en mojado, bajo consumo. $124.000|||AE61 si usás más ruta, mejor confort de marcha. $138.500
+
+Ejemplo 4 — Medida incompleta:
+Cliente: necesito 205R16
+{nombre}: qué perfil usás? por ejemplo 205/55R16, 205/60R16?
+
+Ejemplo 5 — Cliente quiere comprar, sin nombre ni sucursal:
+Cliente: dale, me llevo 4 del ES32
+{nombre}: perfecto|||pasame tu nombre — estamos por Acassuso y Martínez: <ubicacion>acassuso</ubicacion><ubicacion>martinez</ubicacion>
+Cliente: Juan, voy a ir a Martínez
+{nombre}: <tool>{{"name": "confirmar_venta", "args": {{"neumatico_id": "es32-205-55r16", "cantidad": 4, "nombre_cliente": "Juan", "sucursal": "martinez"}}}}</tool>
+[venta confirmada]
+{nombre}: listo Juan, quedó anotado|||te esperamos en Martínez
+
+Ejemplo 6 — Sin stock:
+Cliente: tienen 235/45R18?
+{nombre}: <tool>{{"name": "buscar_neumaticos", "args": {{"medida": "235/45R18"}}}}</tool>
+[resultado: 0 neumáticos encontrados]
+{nombre}: en esa medida no tengo por ahora|||si me decís tu auto te busco alternativas
+
+Ejemplo 7 — Mensaje sin sentido:
+Cliente: ///
+{nombre}: no te llegó bien el mensaje, en qué te ayudo?
+
+Ejemplo 8 — Presupuesto:
+Cliente: cuánto sería todo con instalación para 4 ruedas del ES32?
+{nombre}: <tool>{{"name": "generar_presupuesto", "args": {{"neumatico_id": "es32-185-70r14", "cantidad": 4, "incluir_instalacion": true}}}}</tool>
+[presupuesto: 4x ES32 total $378.000]
+{nombre}: 4x BlueEarth ES32 185/70R14 — $89.500 c/u → $358.000|||Instalación y balanceo — $20.000|||Total: $378.000|||Hasta 6 cuotas sin interés"""
 
 
 AGENTES = [
@@ -218,7 +268,16 @@ def procesar_mensaje(
     modelo: str = MODELO_DEFAULT,
     agente: dict | None = None,
     debug: bool = False,
+    meta: dict | None = None,
 ) -> Generator[str, None, None]:
+
+    if meta is not None:
+        meta.update({
+            "memoria":        len(historial),
+            "contexto":       0,
+            "confianza":      None,
+            "logica_negocio": [],
+        })
 
     hora_actual = datetime.now().strftime("%H:%M")
     prompt_con_hora = get_prompt_sistema(agente, debug=debug) + f"\n\nHora actual del servidor: {hora_actual}"
@@ -245,7 +304,7 @@ def procesar_mensaje(
                     contents=contenidos,
                     config=types.GenerateContentConfig(
                         system_instruction=prompt_con_hora,
-                        temperature=0.3,
+                        temperature=TEMPERATURA,
                         max_output_tokens=4096,
                     ),
                 )
@@ -269,9 +328,11 @@ def procesar_mensaje(
         stream_ok = True
         ya_emitido = 0
         COLA = max(len("<tool_code>"), len("<thought>")) - 1
+        ultimo_chunk = None
 
         try:
             for chunk in stream:
+                ultimo_chunk = chunk
                 try:
                     candidates = chunk.candidates or []
                     if candidates and candidates[0].content and candidates[0].content.parts:
@@ -306,6 +367,20 @@ def procesar_mensaje(
             if enviado_al_usuario:
                 return
 
+        if meta is not None and ultimo_chunk is not None:
+            try:
+                um = ultimo_chunk.usage_metadata
+                if um:
+                    meta["contexto"] += getattr(um, "prompt_token_count", 0) or 0
+            except Exception:
+                pass
+            try:
+                fr = ultimo_chunk.candidates[0].finish_reason
+                if fr and meta.get("confianza") is None:
+                    meta["confianza"] = str(fr).split(".")[-1]
+            except Exception:
+                pass
+
         if not stream_ok and not enviado_al_usuario and not en_tool_call:
             continue
 
@@ -321,6 +396,8 @@ def procesar_mensaje(
             if tool_call:
                 nombre, argumentos = tool_call
                 logger.info(f"Ejecutando herramienta: {nombre} args={argumentos}")
+                if meta is not None:
+                    meta["logica_negocio"].append(nombre)
                 contenidos.append({"role": "model", "parts": [{"text": buffer}]})
                 resultado = ejecutar_herramienta(nombre, argumentos, session_id)
                 logger.info(f"Resultado: {resultado[:200]}")
