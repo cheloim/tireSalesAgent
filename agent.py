@@ -53,6 +53,8 @@ NUNCA:
 - Preguntar la medida si el cliente mencionó su vehículo
 - Mencionar turnos — no trabajan con ese sistema; si preguntan, solo decís que no manejan turnos
 - Mencionar pagos online, transferencia, Mercado Pago ni links de pago — solo en sucursal
+- Dar la fecha de fabricación (DOT) del neumático — no la tenés. Si preguntan: decí que los gomeros lo pueden ver cuando pase por la sucursal, y seguí con que el stock es reciente. Nunca especifiques año ni prometás confirmar por mensajes
+- Volver a enviar las tags de ubicación de sucursales si ya las enviaste en la misma conversación
 
 SÍ:
 - Respondés lo que preguntan y listo
@@ -77,6 +79,8 @@ DATOS CLAVE:
   Acassuso: <ubicacion>acassuso</ubicacion> | Martínez: <ubicacion>martinez</ubicacion>
 - Tags exactas: <ubicacion>acassuso</ubicacion> o <ubicacion>martinez</ubicacion>
 - Cuando el cliente pregunte dónde están, por la zona, cómo llegar o cualquier variante → enviá las tags de ambas sucursales
+- Las tags de ubicación van SIEMPRE al final, en un mensaje separado con |||, nunca antes del texto ni mezcladas en medio de una respuesta
+- Si ya enviaste las ubicaciones en esta conversación, no las vuelvas a mandar
 - Stock: BlueEarth ES32, AE61 (SUV), Drive AC02A (Run-Flat)
 
 SALUDO: Solo si es el primer mensaje y es un saludo puro. SIEMPRE decís "soy {nombre}" (nunca "sos") — esto es obligatorio, nunca lo omitás. Variás la frase y el tono según la hora (buenos días 6-12h, buenas tardes 12-20h, buenas noches 20-6h). Podés arrancar con "hola" antes o después del nombre, pero el nombre siempre va. Para preguntar qué buscan: "qué andás buscando?", "en qué te ayudo?", "contame" — nunca "qué necesitás?". A veces dos mensajes con |||.
@@ -245,19 +249,64 @@ def _comprimir_resultado_tool(texto: str) -> str:
     return _RESULTADO_TOOL_RE.sub(resumir, texto)
 
 
-_TURNOS_VERBATIM = 8  # últimos N turnos se mandan completos; los anteriores se comprimen
+_TURNOS_VERBATIM = 8        # últimos N turnos se mandan completos
+_MIN_TURNOS_VIEJOS   = 4   # mínimo de turnos viejos para activar sumarización
 
-def _historial_a_gemini(historial: list[dict]) -> list[dict]:
+_summary_cache: dict[str, str] = {}  # "session_id:corte" -> texto resumen
+
+
+def _resumir_mensajes(mensajes: list[dict]) -> str:
+    """Llama a Gemini para resumir la porción vieja del historial en un párrafo."""
+    texto = "\n".join(
+        f"{'Cliente' if m['role'] == 'user' else 'Agente'}: {m['content'][:500]}"
+        for m in mensajes
+    )
+    prompt = (
+        "Resumí esta conversación de ventas de neumáticos en un párrafo compacto. "
+        "Incluí: qué consultó el cliente, qué productos y precios se mencionaron, "
+        "el estado de la venta y cualquier dato del cliente (vehículo, preferencias, objeciones). "
+        "Máximo 150 palabras. Sin viñetas, en español rioplatense.\n\n"
+        + texto
+    )
+    try:
+        resp = get_client().models.generate_content(
+            model=MODELO_DEFAULT,
+            contents=[{"role": "user", "parts": [{"text": prompt}]}],
+        )
+        return resp.text.strip()
+    except Exception as e:
+        logger.warning(f"Sumarización fallida, usando truncado: {e}")
+        return "\n".join(
+            f"{'Cliente' if m['role'] == 'user' else 'Agente'}: {m['content'][:200]}"
+            for m in mensajes
+        )
+
+
+def _historial_a_gemini(historial: list[dict], session_id: str = "") -> list[dict]:
     """Convierte el historial OpenAI-style a formato Gemini.
-    Mensajes recientes van completos; los más viejos se comprimen para ahorrar tokens."""
+    Mensajes recientes van completos; los más viejos se sumarizán con Gemini."""
     contenidos = []
     corte = max(0, len(historial) - _TURNOS_VERBATIM * 2)
-    for i, msg in enumerate(historial):
-        role = "model" if msg["role"] == "assistant" else "user"
-        content = msg["content"]
-        if i < corte and role == "model" and len(content) > 200:
-            content = content[:200] + "…"
-        contenidos.append({"role": role, "parts": [{"text": content}]})
+
+    if corte >= _MIN_TURNOS_VIEJOS * 2:
+        cache_key = f"{session_id}:{corte}"
+        if cache_key not in _summary_cache:
+            logger.info(f"Resumiendo {corte} mensajes viejos (session={session_id or 'anon'})")
+            _summary_cache[cache_key] = _resumir_mensajes(historial[:corte])
+        resumen = _summary_cache[cache_key]
+        contenidos.append({"role": "user",  "parts": [{"text": f"[Resumen de la conversación anterior]\n{resumen}"}]})
+        contenidos.append({"role": "model", "parts": [{"text": "Entendido, tengo el contexto."}]})
+        for msg in historial[corte:]:
+            role = "model" if msg["role"] == "assistant" else "user"
+            contenidos.append({"role": role, "parts": [{"text": msg["content"]}]})
+    else:
+        for i, msg in enumerate(historial):
+            role = "model" if msg["role"] == "assistant" else "user"
+            content = msg["content"]
+            if i < corte and role == "model" and len(content) > 200:
+                content = content[:200] + "…"
+            contenidos.append({"role": role, "parts": [{"text": content}]})
+
     return contenidos
 
 
@@ -282,7 +331,7 @@ def procesar_mensaje(
     hora_actual = datetime.now().strftime("%H:%M")
     prompt_con_hora = get_prompt_sistema(agente, debug=debug) + f"\n\nHora actual del servidor: {hora_actual}"
 
-    contenidos = _historial_a_gemini(historial)
+    contenidos = _historial_a_gemini(historial, session_id)
     contenidos.append({"role": "user", "parts": [{"text": mensaje_usuario}]})
 
     RETRIABLE = (
