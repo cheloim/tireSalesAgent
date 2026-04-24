@@ -264,3 +264,52 @@ def actualizar_stock(neumatico_id: str, cantidad: int) -> dict:
             n["stock"] -= cantidad
             return {"ok": True, "stock_restante": n["stock"]}
     return {"ok": False, "error": "Neumático no encontrado"}
+
+
+def sincronizar_inventario(actualizaciones: list[dict]) -> list[dict]:
+    """Actualiza stock y/o precios desde una fuente externa (Tango, CRM, etc).
+
+    Cada item puede tener:
+      - id (ej. "N001")  O  medida (ej. "175/65R14")  para identificar el neumático
+      - stock            (int)   → reemplaza el stock actual
+      - precio           (float) → reemplaza el precio de venta
+      - precio_anterior  (float) → reemplaza el precio tachado
+
+    Retorna lista de resultados por item.
+    """
+    resultados = []
+    campos_permitidos = {"stock", "precio", "precio_anterior"}
+
+    for item in actualizaciones:
+        # Buscar el neumático por id o por medida
+        candidatos = []
+        if "id" in item:
+            candidatos = [n for n in NEUMATICOS if n["id"] == item["id"]]
+        elif "medida" in item:
+            candidatos = [n for n in NEUMATICOS if n["medida"] == item["medida"]]
+
+        if not candidatos:
+            resultados.append({
+                "ok":    False,
+                "ref":   item.get("id") or item.get("medida") or "?",
+                "error": "Neumático no encontrado",
+            })
+            continue
+
+        actualizados = []
+        for n in candidatos:
+            cambios = {}
+            for campo in campos_permitidos:
+                if campo in item:
+                    valor = item[campo]
+                    if campo == "stock" and not isinstance(valor, int):
+                        valor = int(valor)
+                    elif campo in ("precio", "precio_anterior"):
+                        valor = float(valor)
+                    cambios[campo] = valor
+                    n[campo] = valor
+            actualizados.append({"id": n["id"], "medida": n["medida"], "cambios": cambios})
+
+        resultados.append({"ok": True, "actualizados": actualizados})
+
+    return resultados

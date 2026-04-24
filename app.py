@@ -10,11 +10,13 @@ import sqlite3
 import threading
 import time
 import uuid
+from datetime import datetime, timezone, timedelta
 
 import requests as http
 from flask import Flask, Response, jsonify, request, send_from_directory, session, stream_with_context
 
 from agent import AGENTES, MODELO_DEFAULT, TEMPERATURA, PROMPT_VERSION, get_prompt_sistema, procesar_mensaje, transcribir_audio, verificar_gemini
+from inventory import sincronizar_inventario
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -53,6 +55,7 @@ app.secret_key = "neumaticos-plus-secret-key-2024"
 MODELO_LLM = MODELO_DEFAULT
 
 _web_debug_mode = False
+_tg_contacts: dict[str, dict] = {}  # session_id → {name, phone} for notifications
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_API   = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
@@ -69,6 +72,11 @@ NGROK_URL     = os.environ.get("NGROK_URL", "").rstrip("/")
 
 TG_NOTIFY_CHAT_ID = os.environ.get("TG_NOTIFY_CHAT_ID", "")
 WA_NOTIFY_NUMBER  = os.environ.get("WA_NOTIFY_NUMBER", "")
+
+ARGENTINA_TZ      = timezone(timedelta(hours=-3))
+MSG_FUERA_HORARIO = "Nuestro horario de atencion es de 07:30 a 23:00 te responderemos en ese horario. Neumáticos Martinez"
+
+INVENTORY_WEBHOOK_SECRET = os.environ.get("INVENTORY_WEBHOOK_SECRET", "")
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conversaciones.db")
 
@@ -126,9 +134,155 @@ def _init_db():
         cols_hist = {r[1] for r in conn.execute("PRAGMA table_info(historiales)").fetchall()}
         if "debug" not in cols_hist:
             conn.execute("ALTER TABLE historiales ADD COLUMN debug INTEGER DEFAULT 0")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS inventario_overrides (
+                neumatico_id    TEXT PRIMARY KEY,
+                stock           INTEGER,
+                precio          REAL,
+                precio_anterior REAL,
+                actualizado     TEXT,
+                fuente          TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS mensajes_fuera_horario (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                canal      TEXT NOT NULL,
+                from_id    TEXT NOT NULL,
+                texto      TEXT NOT NULL,
+                recibido   TEXT DEFAULT (datetime('now', 'localtime')),
+                procesado  INTEGER DEFAULT 0
+            )
+        """)
         conn.commit()
 
 _init_db()
+
+
+def _cargar_overrides_inventario():
+    """Aplica al arranque los overrides de inventario guardados en DB."""
+    from inventory import NEUMATICOS
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT neumatico_id, stock, precio, precio_anterior FROM inventario_overrides"
+        ).fetchall()
+    idx = {n["id"]: n for n in NEUMATICOS}
+    for neumatico_id, stock, precio, precio_anterior in rows:
+        n = idx.get(neumatico_id)
+        if not n:
+            continue
+        if stock is not None:
+            n["stock"] = stock
+        if precio is not None:
+            n["precio"] = precio
+        if precio_anterior is not None:
+            n["precio_anterior"] = precio_anterior
+    if rows:
+        logger.info(f"Inventario: {len(rows)} override(s) aplicado(s) desde DB")
+
+_cargar_overrides_inventario()
+
+
+# ── Horario de atención ──────────────────────────────────────
+
+def es_horario_atencion() -> bool:
+    ahora = datetime.now(ARGENTINA_TZ)
+    minutos = ahora.hour * 60 + ahora.minute
+    return 7 * 60 + 30 <= minutos < 23 * 60
+
+
+def _encolar_mensaje_fuera_horario(session_id: str, canal: str, from_id: str, texto: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO mensajes_fuera_horario (session_id, canal, from_id, texto) VALUES (?, ?, ?, ?)",
+            (session_id, canal, from_id, texto)
+        )
+        conn.commit()
+
+
+def _hay_mensaje_pendiente(session_id: str) -> bool:
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM mensajes_fuera_horario WHERE session_id = ? AND procesado = 0 LIMIT 1",
+            (session_id,)
+        ).fetchone()
+    return row is not None
+
+
+def _obtener_grupos_pendientes() -> list[tuple[str, dict]]:
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT id, session_id, canal, from_id, texto FROM mensajes_fuera_horario WHERE procesado = 0 ORDER BY id"
+        ).fetchall()
+    grupos: dict[str, dict] = {}
+    orden: list[str] = []
+    for id_, session_id, canal, from_id, texto in rows:
+        if session_id not in grupos:
+            grupos[session_id] = {"canal": canal, "from_id": from_id, "textos": [], "ids": []}
+            orden.append(session_id)
+        grupos[session_id]["textos"].append(texto)
+        grupos[session_id]["ids"].append(id_)
+    return [(sid, grupos[sid]) for sid in orden]
+
+
+def _marcar_procesados_fuera_horario(session_id: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE mensajes_fuera_horario SET procesado = 1 WHERE session_id = ? AND procesado = 0",
+            (session_id,)
+        )
+        conn.commit()
+
+
+_cola_procesando = False
+
+
+def _worker_horario():
+    global _cola_procesando
+    while True:
+        time.sleep(30)
+        try:
+            ahora = datetime.now(ARGENTINA_TZ)
+            minutos = ahora.hour * 60 + ahora.minute
+            en_ventana = 7 * 60 + 30 <= minutos <= 8 * 60 + 30
+
+            if not en_ventana or _cola_procesando:
+                continue
+
+            grupos = _obtener_grupos_pendientes()
+            if not grupos:
+                continue
+
+            _cola_procesando = True
+            logger.info(f"Despacho cola fuera de horario: {len(grupos)} sesión(es)")
+
+            for i, (session_id, grupo) in enumerate(grupos):
+                if i > 0:
+                    time.sleep(random.uniform(90, 150))
+                texto   = "\n".join(grupo["textos"])
+                canal   = grupo["canal"]
+                from_id = grupo["from_id"]
+                try:
+                    if canal == "telegram":
+                        _procesar_tg(int(from_id), session_id, texto)
+                    elif canal == "whatsapp":
+                        _procesar_wa(from_id, session_id, texto)
+                    elif canal == "twilio":
+                        _procesar_twilio(from_id, session_id, texto)
+                    _marcar_procesados_fuera_horario(session_id)
+                    logger.info(f"Cola despachada [{session_id}]")
+                except Exception as e:
+                    logger.error(f"Error despachando cola [{session_id}]: {e}")
+
+            _cola_procesando = False
+
+        except Exception as e:
+            logger.error(f"Error en worker horario: {e}")
+            _cola_procesando = False
+
+
+threading.Thread(target=_worker_horario, daemon=True, name="worker-horario").start()
 
 
 def obtener_historial(session_id: str) -> list[dict]:
@@ -256,6 +410,12 @@ def chat():
     conversation_id = obtener_conversation_id(session_id)
 
     def generar():
+        if not es_horario_atencion():
+            data = json.dumps({"tipo": "texto", "contenido": MSG_FUERA_HORARIO}, ensure_ascii=False)
+            yield f"data: {data}\n\n"
+            yield 'data: {"tipo": "fin"}\n\n'
+            return
+
         texto_completo = []
         meta = {}
 
@@ -381,7 +541,9 @@ def notificar_dot(session_id: str, neumaticos: str = ""):
     elif session_id.startswith("twilio_"):
         contacto = session_id[7:]
     elif session_id.isdigit():
-        contacto = f"Telegram ID {session_id}"
+        info = _tg_contacts.get(session_id, {})
+        name, phone = info.get("name", ""), info.get("phone", "")
+        contacto = " · ".join(filter(None, [name, phone])) or f"Telegram {session_id}"
     else:
         contacto = "Web (sin teléfono)"
 
@@ -664,6 +826,17 @@ def telegram_webhook():
     chat_id = message["chat"]["id"]
     msg_id  = f"tg_{chat_id}_{message.get('message_id')}"
     logger.info(f"TG msg_id={msg_id} keys={list(message.keys())}")
+    sender = message.get("from") or {}
+    contact = message.get("contact") or {}
+    sid = str(chat_id)
+    info = _tg_contacts.setdefault(sid, {"name": "", "phone": ""})
+    if not info["name"]:
+        info["name"] = (
+            f"@{sender['username']}" if sender.get("username")
+            else " ".join(filter(None, [sender.get("first_name"), sender.get("last_name")])) or ""
+        )
+    if contact.get("phone_number") and str(contact.get("user_id", "")) == sid:
+        info["phone"] = contact["phone_number"]
     if _ya_procesado(msg_id):
         logger.info(f"TG duplicado ignorado: {msg_id}")
         return "", 200
@@ -697,6 +870,11 @@ def telegram_webhook():
         return "", 200
 
     session_id = str(chat_id)
+    if not es_horario_atencion():
+        if not _hay_mensaje_pendiente(session_id):
+            tg_send_message(chat_id, MSG_FUERA_HORARIO)
+        _encolar_mensaje_fuera_horario(session_id, "telegram", str(chat_id), text)
+        return "", 200
     _buffer_message(session_id, text, lambda t: _procesar_tg(chat_id, session_id, t))
     return "", 200
 
@@ -934,6 +1112,11 @@ def whatsapp_webhook():
         return "", 200
 
     session_id = f"wa_{from_number}"
+    if not es_horario_atencion():
+        if not _hay_mensaje_pendiente(session_id):
+            wa_send_message(from_number, MSG_FUERA_HORARIO)
+        _encolar_mensaje_fuera_horario(session_id, "whatsapp", from_number, text)
+        return "", 200
     _buffer_message(session_id, text, lambda t: _procesar_wa(from_number, session_id, t))
     return "", 200
 
@@ -1051,6 +1234,11 @@ def twilio_webhook():
         return "", 200
 
     session_id = f"twilio_{from_number}"
+    if not es_horario_atencion():
+        if not _hay_mensaje_pendiente(session_id):
+            twilio_send_message(from_number, MSG_FUERA_HORARIO)
+        _encolar_mensaje_fuera_horario(session_id, "twilio", from_number, text)
+        return "", 200
     _buffer_message(session_id, text, lambda t: _procesar_twilio(from_number, session_id, t))
     return "", 200
 
@@ -1102,6 +1290,84 @@ def _procesar_twilio(from_number: str, session_id: str, text: str):
                       confianza=meta_twilio.get("confianza"), contexto=meta_twilio.get("contexto"),
                       memoria=meta_twilio.get("memoria"),
                       logica_negocio=",".join(meta_twilio.get("logica_negocio") or []) or None)
+
+
+# ── Webhook de inventario (Tango / CRM) ─────────────────────
+
+@app.route("/webhook/inventario", methods=["POST"])
+def inventario_webhook():
+    """Recibe actualizaciones de stock y precios desde Tango u otro CRM.
+
+    Autenticación: header X-Webhook-Secret (requerido si INVENTORY_WEBHOOK_SECRET está en .env)
+    Payload JSON:
+      {
+        "productos": [
+          { "id": "N001", "stock": 10, "precio": 150000 },
+          { "medida": "205/55R16", "stock": 5, "precio_anterior": 200000 }
+        ],
+        "fuente": "tango"   // opcional, para el log
+      }
+    """
+    secret_recibido = request.headers.get("X-Webhook-Secret", "")
+    if INVENTORY_WEBHOOK_SECRET and secret_recibido != INVENTORY_WEBHOOK_SECRET:
+        logger.warning("Webhook inventario: secret inválido")
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    productos = data.get("productos")
+    if not isinstance(productos, list) or not productos:
+        return jsonify({"error": "Se requiere 'productos' como lista no vacía"}), 400
+
+    fuente = str(data.get("fuente", "externo"))[:50]
+    resultados = sincronizar_inventario(productos)
+
+    ok_count  = sum(1 for r in resultados if r.get("ok"))
+    err_count = len(resultados) - ok_count
+    logger.info(f"Inventario actualizado desde '{fuente}': {ok_count} OK, {err_count} errores")
+
+    # Persistir en DB los cambios exitosos para sobrevivir reinicios
+    with sqlite3.connect(DB_PATH) as conn:
+        for r in resultados:
+            if not r.get("ok"):
+                continue
+            for upd in r.get("actualizados", []):
+                cambios = upd["cambios"]
+                conn.execute("""
+                    INSERT INTO inventario_overrides
+                        (neumatico_id, stock, precio, precio_anterior, actualizado, fuente)
+                    VALUES (?, ?, ?, ?, datetime('now', 'localtime'), ?)
+                    ON CONFLICT(neumatico_id) DO UPDATE SET
+                        stock           = COALESCE(excluded.stock,           inventario_overrides.stock),
+                        precio          = COALESCE(excluded.precio,          inventario_overrides.precio),
+                        precio_anterior = COALESCE(excluded.precio_anterior, inventario_overrides.precio_anterior),
+                        actualizado     = excluded.actualizado,
+                        fuente          = excluded.fuente
+                """, (
+                    upd["id"],
+                    cambios.get("stock"),
+                    cambios.get("precio"),
+                    cambios.get("precio_anterior"),
+                    fuente,
+                ))
+        conn.commit()
+
+    if ok_count:
+        lineas = [f"📦 ACTUALIZACIÓN DE INVENTARIO ({fuente.upper()})"]
+        for r in resultados:
+            if not r.get("ok"):
+                continue
+            for upd in r.get("actualizados", []):
+                cambios_str = ", ".join(f"{k}={v}" for k, v in upd["cambios"].items())
+                lineas.append(f"  {upd['id']} {upd['medida']}: {cambios_str}")
+        if err_count:
+            lineas.append(f"  ⚠ {err_count} producto(s) no encontrado(s)")
+        _enviar_notificacion("\n".join(lineas))
+
+    return jsonify({
+        "ok":        ok_count,
+        "errores":   err_count,
+        "resultados": resultados,
+    })
 
 
 # ── Dashboard ────────────────────────────────────────────────
