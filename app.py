@@ -50,6 +50,9 @@ logging.getLogger().addHandler(_mem_handler)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "neumaticos-plus-secret-key-2024")
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"]   = os.environ.get("FLASK_ENV") == "production"
 
 # Modelo a usar (configurable)
 MODELO_LLM = MODELO_DEFAULT
