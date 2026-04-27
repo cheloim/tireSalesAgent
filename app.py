@@ -1,6 +1,7 @@
 """Servidor web Flask para el Agente de Ventas de Neumáticos."""
 
 import collections
+import hmac
 import json
 import logging
 import os
@@ -75,6 +76,21 @@ NGROK_URL     = os.environ.get("NGROK_URL", "").rstrip("/")
 
 TG_NOTIFY_CHAT_ID = os.environ.get("TG_NOTIFY_CHAT_ID", "")
 WA_NOTIFY_NUMBER  = os.environ.get("WA_NOTIFY_NUMBER", "")
+
+DASHBOARD_TOKEN = os.environ.get("DASHBOARD_TOKEN", "")
+_RUTAS_PROTEGIDAS = ("/api/dashboard", "/api/debug-session", "/api/logs/stream")
+
+
+@app.before_request
+def _verificar_token_dashboard():
+    if not request.path.startswith(_RUTAS_PROTEGIDAS):
+        return
+    if not DASHBOARD_TOKEN:
+        return  # sin token configurado, acceso libre (desarrollo local)
+    # EventSource no soporta headers → acepta token por query param también
+    token = request.headers.get("X-Dashboard-Token") or request.args.get("token", "")
+    if not token or not hmac.compare_digest(token, DASHBOARD_TOKEN):
+        return jsonify({"error": "Unauthorized"}), 401
 
 ARGENTINA_TZ      = timezone(timedelta(hours=-3))
 MSG_FUERA_HORARIO = "Nuestro horario de atención es de 07:30 a 23:00 te responderemos en ese horario. Neumáticos Martinez"
