@@ -5,10 +5,24 @@ function _getToken() {
   return sessionStorage.getItem('dashboard_token') || '';
 }
 
-function _promptToken(msg) {
-  const t = prompt(msg || 'Dashboard token:');
-  if (t) sessionStorage.setItem('dashboard_token', t.trim());
-  return t ? t.trim() : '';
+function _setToken(t) {
+  sessionStorage.setItem('dashboard_token', t);
+}
+
+function toggleTokenVis() {
+  const inp = document.getElementById('token-input');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+
+function _mostrarModalToken(error = false) {
+  document.getElementById('token-overlay').style.display = 'flex';
+  document.getElementById('token-error').style.display = error ? 'block' : 'none';
+  document.getElementById('token-input').value = '';
+  setTimeout(() => document.getElementById('token-input').focus(), 50);
+}
+
+function _ocultarModalToken() {
+  document.getElementById('token-overlay').style.display = 'none';
 }
 
 async function apiFetch(url, opts = {}) {
@@ -17,10 +31,24 @@ async function apiFetch(url, opts = {}) {
   const res = await fetch(url, { ...opts, headers });
   if (res.status === 401) {
     sessionStorage.removeItem('dashboard_token');
-    _promptToken('Token incorrecto. Ingresá el token del dashboard:');
+    await _pedirToken(true);
     return apiFetch(url, opts);
   }
   return res;
+}
+
+function _pedirToken(error = false) {
+  return new Promise(resolve => {
+    _mostrarModalToken(error);
+    document.getElementById('token-form').onsubmit = (e) => {
+      e.preventDefault();
+      const t = document.getElementById('token-input').value.trim();
+      if (!t) return;
+      _setToken(t);
+      _ocultarModalToken();
+      resolve(t);
+    };
+  });
 }
 
 function _sseUrl(path) {
@@ -278,8 +306,12 @@ async function cargarVentas() {
 }
 
 // ── Init ──────────────────────────────────────────────────────
-if (!_getToken()) _promptToken('Ingresá el token del dashboard:');
-conectarStream();
-cargarVentas();
-cargarLogs();
-setInterval(cargarLogs, 30_000);
+async function init() {
+  if (!_getToken()) await _pedirToken();
+  conectarStream();
+  cargarVentas();
+  cargarLogs();
+  setInterval(cargarLogs, 30_000);
+}
+
+init();
