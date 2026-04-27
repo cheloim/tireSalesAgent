@@ -156,8 +156,9 @@ def _init_db():
             if col not in cols_conv:
                 conn.execute(f"ALTER TABLE conversations ADD COLUMN {col} {tipo}")
         cols_hist = {r[1] for r in conn.execute("PRAGMA table_info(historiales)").fetchall()}
-        if "debug" not in cols_hist:
-            conn.execute("ALTER TABLE historiales ADD COLUMN debug INTEGER DEFAULT 0")
+        for col, tipo in [("debug", "INTEGER DEFAULT 0"), ("escalado", "INTEGER DEFAULT 0")]:
+            if col not in cols_hist:
+                conn.execute(f"ALTER TABLE historiales ADD COLUMN {col} {tipo}")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS inventario_overrides (
                 neumatico_id    TEXT PRIMARY KEY,
@@ -400,6 +401,23 @@ def obtener_o_asignar_agente(session_id: str) -> dict:
         return agente
 
 
+def marcar_escalado(session_id: str, valor: bool = True):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE historiales SET escalado = ? WHERE session_id = ?",
+            (1 if valor else 0, session_id)
+        )
+        conn.commit()
+
+
+def es_escalado(session_id: str) -> bool:
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT escalado FROM historiales WHERE session_id = ?", (session_id,)
+        ).fetchone()
+    return bool(row and row[0])
+
+
 def obtener_session_id() -> str:
     if "session_id" not in session:
         session["session_id"] = str(uuid.uuid4())
@@ -435,6 +453,11 @@ def chat():
     conversation_id = obtener_conversation_id(session_id)
 
     def generar():
+        if es_escalado(session_id):
+            data = json.dumps({"tipo": "texto", "contenido": "Tu consulta fue derivada a nuestro equipo. En breve te contactamos."}, ensure_ascii=False)
+            yield f"data: {data}\n\n"
+            yield 'data: {"tipo": "fin"}\n\n'
+            return
         if not es_horario_atencion():
             data = json.dumps({"tipo": "texto", "contenido": MSG_FUERA_HORARIO}, ensure_ascii=False)
             yield f"data: {data}\n\n"
@@ -656,6 +679,7 @@ _registrar_tool_callbacks(
     obtener_historial=obtener_historial,
     notificar_escalado=notificar_escalado,
     notificar_dot=notificar_dot,
+    marcar_escalado=marcar_escalado,
 )
 
 
@@ -913,6 +937,9 @@ def telegram_webhook():
         return "", 200
 
     session_id = str(chat_id)
+    if es_escalado(session_id):
+        logger.info(f"TG sesión escalada, mensaje ignorado [{session_id}]")
+        return "", 200
     if not es_horario_atencion():
         if not _hay_mensaje_pendiente(session_id):
             tg_send_message(chat_id, MSG_FUERA_HORARIO)
@@ -1181,6 +1208,9 @@ def whatsapp_webhook():
         return "", 200
 
     session_id = f"wa_{from_number}"
+    if es_escalado(session_id):
+        logger.info(f"WA sesión escalada, mensaje ignorado [{session_id}]")
+        return "", 200
     if not es_horario_atencion():
         if not _hay_mensaje_pendiente(session_id):
             wa_send_message(from_number, MSG_FUERA_HORARIO)
@@ -1268,6 +1298,9 @@ def twilio_webhook():
         return "", 200
 
     session_id = f"twilio_{from_number}"
+    if es_escalado(session_id):
+        logger.info(f"Twilio sesión escalada, mensaje ignorado [{session_id}]")
+        return "", 200
     if not es_horario_atencion():
         if not _hay_mensaje_pendiente(session_id):
             twilio_send_message(from_number, MSG_FUERA_HORARIO)
@@ -1416,7 +1449,7 @@ def _metricas_data() -> dict:
 def _chats_data() -> list:
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute("""
-            SELECT session_id, agente, canal, actualizado, mensajes, debug
+            SELECT session_id, agente, canal, actualizado, mensajes, debug, escalado
             FROM historiales
             WHERE actualizado >= datetime('now', 'localtime', '-2 hours')
             ORDER BY actualizado DESC LIMIT 50
@@ -1428,6 +1461,7 @@ def _chats_data() -> list:
         "actualizado": r[3],
         "mensajes":    _msg_count(r[4]),
         "debug":       bool(r[5]),
+        "escalado":    bool(r[6]),
     } for r in rows]
 
 
@@ -1535,6 +1569,13 @@ def dashboard_ventas():
         "cantidad": r[5], "total":  r[6], "sucursal": r[7] or "—",
         "cliente":  r[8] or "—", "fecha": r[9],
     } for r in rows]})
+
+
+@app.route("/api/dashboard/sesion/<session_id>/resolver", methods=["POST"])
+def dashboard_resolver_escalado(session_id):
+    marcar_escalado(session_id, valor=False)
+    logger.info(f"Sesión reactivada desde dashboard: {session_id}")
+    return jsonify({"ok": True, "session_id": session_id})
 
 
 @app.route("/api/dashboard/stream")

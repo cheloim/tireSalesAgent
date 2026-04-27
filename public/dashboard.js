@@ -103,17 +103,25 @@ function renderChats(chats) {
   const tbody = document.getElementById('tbody-chats');
   document.getElementById('badge-chats').textContent = chats?.length ?? 0;
   if (!chats?.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="empty">No active chats</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No active chats</td></tr>';
     return;
   }
   tbody.innerHTML = chats.map(c => `
-    <tr>
+    <tr${c.escalado ? ' class="row-escalado"' : ''}>
       <td>${canalBadge(c.canal)}</td>
-      <td>${c.agente}${c.debug ? ' <span class="badge-debug">debug</span>' : ''}</td>
+      <td>${c.agente}${c.debug ? ' <span class="badge-debug">debug</span>' : ''}${c.escalado ? ' <span class="badge-escalado">escalado</span>' : ''}</td>
       <td>${c.mensajes}</td>
       <td>${tiempoAtras(c.actualizado)}</td>
       <td><button class="btn-row" onclick="abrirChat('${c.session_id}','${c.agente}','${c.canal}')">👁</button></td>
+      <td>${c.escalado ? `<button class="btn-resolver" onclick="resolverEscalado('${c.session_id}')">Resolver</button>` : ''}</td>
     </tr>`).join('');
+}
+
+async function resolverEscalado(session_id) {
+  try {
+    const res = await apiFetch(`/api/dashboard/sesion/${encodeURIComponent(session_id)}/resolver`, { method: 'POST' });
+    if (!res.ok) { console.error('resolver', await res.text()); }
+  } catch(e) { console.error('resolver', e); }
 }
 
 // ── SSE dashboard ─────────────────────────────────────────────
