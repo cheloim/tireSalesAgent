@@ -569,9 +569,10 @@ def notificar_escalado(session_id: str, motivo: str, historial: list[dict]):
     _enviar_notificacion(alerta)
 
     if historial:
+        agente_nombre = obtener_o_asignar_agente(session_id)["nombre"]
         lineas = []
         for msg in historial:
-            rol = "Cliente" if msg["role"] == "user" else "Rodrigo"
+            rol = "Cliente" if msg["role"] == "user" else agente_nombre
             lineas.append(f"[{rol}] {msg['content'][:600]}")
         _enviar_notificacion("Conversación:\n\n" + "\n\n".join(lineas))
 
@@ -689,10 +690,11 @@ def _procesar_audio_diferido(chat_id: int, file_id: str, session_id: str, modelo
 
     historial       = obtener_historial(session_id)
     conversation_id = obtener_conversation_id(session_id)
+    agente          = obtener_o_asignar_agente(session_id)
     tg_send_typing(chat_id)
     meta_audio = {}
     try:
-        chunks    = list(procesar_mensaje(text, historial, session_id, modelo, meta=meta_audio))
+        chunks    = list(procesar_mensaje(text, historial, session_id, modelo, agente, meta=meta_audio))
         respuesta = "".join(chunks).strip()
     except Exception as e:
         logger.error(f"Error procesando audio diferido: {e}")
@@ -926,7 +928,7 @@ def _procesar_tg(chat_id: int, session_id: str, text: str):
         tg_send_message(chat_id, parte)
 
     historial.append({"role": "user",      "content": text})
-    historial.append({"role": "assistant", "content": respuesta_limpia})
+    historial.append({"role": "assistant", "content": respuesta})  # con tags para que el LLM recuerde haberlas enviado
     guardar_historial(session_id, historial, canal="telegram", conversation_id=conversation_id,
                       modelo=MODELO_LLM, temperatura=TEMPERATURA, prompt_version=PROMPT_VERSION,
                       confianza=meta_tg.get("confianza"), contexto=meta_tg.get("contexto"),
@@ -1156,7 +1158,7 @@ def _procesar_wa(from_number: str, session_id: str, text: str):
         wa_send_message(from_number, parte)
 
     historial.append({"role": "user",      "content": text})
-    historial.append({"role": "assistant", "content": respuesta_limpia})
+    historial.append({"role": "assistant", "content": respuesta})  # con tags para que el LLM recuerde haberlas enviado
     guardar_historial(session_id, historial, canal="whatsapp", conversation_id=conversation_id,
                       modelo=MODELO_LLM, temperatura=TEMPERATURA, prompt_version=PROMPT_VERSION,
                       confianza=meta_wa.get("confianza"), contexto=meta_wa.get("contexto"),
@@ -1284,7 +1286,7 @@ def _procesar_twilio(from_number: str, session_id: str, text: str):
         twilio_send_message(from_number, parte)
 
     historial.append({"role": "user",      "content": text})
-    historial.append({"role": "assistant", "content": respuesta_limpia})
+    historial.append({"role": "assistant", "content": respuesta})  # con tags para que el LLM recuerde haberlas enviado
     guardar_historial(session_id, historial, canal="whatsapp", conversation_id=conversation_id,
                       modelo=MODELO_LLM, temperatura=TEMPERATURA, prompt_version=PROMPT_VERSION,
                       confianza=meta_twilio.get("confianza"), contexto=meta_twilio.get("contexto"),
@@ -1374,7 +1376,6 @@ def inventario_webhook():
 
 
 
-@app.route("/api/dashboard/metricas")
 def _msg_count(mensajes_json: str) -> int:
     try:
         return len(json.loads(mensajes_json or "[]"))
@@ -1461,6 +1462,7 @@ def _logs_data() -> list:
     } for r in rows]
 
 
+@app.route("/api/dashboard/metricas")
 def dashboard_metricas():
     return jsonify(_metricas_data())
 
