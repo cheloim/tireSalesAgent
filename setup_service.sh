@@ -8,6 +8,12 @@ APP_DIR="/home/ubuntu/tire_sales_agent"
 SERVICE="tire-agent"
 WEB_SERVICE="tire-agent-web"
 
+# Verificar que python3-venv esté instalado
+if ! python3 -m venv --help &>/dev/null; then
+    echo "python3-venv no encontrado. Instalando..."
+    sudo apt-get install -y python3-venv
+fi
+
 # Instalar dependencias Python en virtualenv
 echo "Configurando virtualenv..."
 if [ ! -d "$APP_DIR/.venv" ]; then
