@@ -1,5 +1,61 @@
 const fmt = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
 
+// ── Auth token ────────────────────────────────────────────────
+function _getToken() {
+  return sessionStorage.getItem('dashboard_token') || '';
+}
+
+function _setToken(t) {
+  sessionStorage.setItem('dashboard_token', t);
+}
+
+function toggleTokenVis() {
+  const inp = document.getElementById('token-input');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+
+function _mostrarModalToken(error = false) {
+  document.getElementById('token-overlay').style.display = 'flex';
+  document.getElementById('token-error').style.display = error ? 'block' : 'none';
+  document.getElementById('token-input').value = '';
+  setTimeout(() => document.getElementById('token-input').focus(), 50);
+}
+
+function _ocultarModalToken() {
+  document.getElementById('token-overlay').style.display = 'none';
+}
+
+async function apiFetch(url, opts = {}) {
+  const token = _getToken();
+  const headers = { ...(opts.headers || {}), ...(token ? { 'X-Dashboard-Token': token } : {}) };
+  const res = await fetch(url, { ...opts, headers });
+  if (res.status === 401) {
+    sessionStorage.removeItem('dashboard_token');
+    await _pedirToken(true);
+    return apiFetch(url, opts);
+  }
+  return res;
+}
+
+function _pedirToken(error = false) {
+  return new Promise(resolve => {
+    _mostrarModalToken(error);
+    document.getElementById('token-form').onsubmit = (e) => {
+      e.preventDefault();
+      const t = document.getElementById('token-input').value.trim();
+      if (!t) return;
+      _setToken(t);
+      _ocultarModalToken();
+      resolve(t);
+    };
+  });
+}
+
+function _sseUrl(path) {
+  const token = _getToken();
+  return token ? `${path}?token=${encodeURIComponent(token)}` : path;
+}
+
 // ── Menu ──────────────────────────────────────────────────────
 function toggleMenu() {
   document.getElementById('nav-menu').classList.toggle('open');
@@ -61,12 +117,15 @@ function renderChats(chats) {
 }
 
 // ── SSE dashboard ─────────────────────────────────────────────
+let _es = null;
+
 function conectarStream() {
   const dot = document.getElementById('live-dot');
   const upd = document.getElementById('last-update');
-  const es  = new EventSource('/api/dashboard/stream');
-  es.onopen    = () => { dot.classList.add('live'); upd.textContent = 'Live'; };
-  es.onmessage = (e) => {
+  if (_es) _es.close();
+  _es = new EventSource(_sseUrl('/api/dashboard/stream'));
+  _es.onopen    = () => { dot.classList.add('live'); upd.textContent = 'Live'; };
+  _es.onmessage = (e) => {
     try {
       const p = JSON.parse(e.data);
       renderMetricas(p.metricas);
@@ -74,13 +133,13 @@ function conectarStream() {
       upd.textContent = 'Updated: ' + new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     } catch (err) { console.error('SSE', err); }
   };
-  es.onerror = () => { dot.classList.remove('live'); upd.textContent = 'Reconnecting…'; };
+  _es.onerror = () => { dot.classList.remove('live'); upd.textContent = 'Reconnecting…'; };
 }
 
 // ── Chat drawer ───────────────────────────────────────────────
 let _drawerSession      = null;
 let _drawerInterval     = null;
-let _drawerConvId       = null; // set when viewing a log (enables download btn)
+let _drawerConvId       = null;
 
 function _abrirDrawer(agente, canal, convId) {
   document.getElementById('drawer-agente').textContent = agente;
@@ -109,8 +168,10 @@ function abrirLog(conversation_id, agente, canal) {
 
 function descargarLogActual() {
   if (!_drawerConvId) return;
+  const token = _getToken();
+  const qs = token ? `?conversation=${encodeURIComponent(_drawerConvId)}&token=${encodeURIComponent(token)}` : `?conversation=${encodeURIComponent(_drawerConvId)}`;
   const a = document.createElement('a');
-  a.href = `/api/dashboard/descargar-logs?conversation=${encodeURIComponent(_drawerConvId)}`;
+  a.href = `/api/dashboard/descargar-logs${qs}`;
   a.download = '';
   a.click();
 }
@@ -127,7 +188,7 @@ function cerrarDrawer() {
 async function actualizarDrawer() {
   if (!_drawerSession) return;
   try {
-    const data = await fetch(`/api/dashboard/chat/${encodeURIComponent(_drawerSession)}`).then(r => r.json());
+    const data = await apiFetch(`/api/dashboard/chat/${encodeURIComponent(_drawerSession)}`).then(r => r.json());
     _renderDrawerMsgs(data.mensajes, true);
     document.getElementById('drawer-updated').textContent =
       'Updated ' + new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -136,7 +197,7 @@ async function actualizarDrawer() {
 
 async function _cargarConversacion(conversation_id) {
   try {
-    const data = await fetch(`/api/dashboard/conversation/${encodeURIComponent(conversation_id)}`).then(r => r.json());
+    const data = await apiFetch(`/api/dashboard/conversation/${encodeURIComponent(conversation_id)}`).then(r => r.json());
     _renderDrawerMsgs(data.mensajes, false);
     document.getElementById('drawer-updated').textContent =
       data.actualizado ? tiempoAtras(data.actualizado) : '';
@@ -161,7 +222,7 @@ function _renderDrawerMsgs(mensajes, autoScroll) {
 // ── Logs 7 days ───────────────────────────────────────────────
 async function cargarLogs() {
   try {
-    const data  = await fetch('/api/dashboard/logs').then(r => r.json());
+    const data  = await apiFetch('/api/dashboard/logs').then(r => r.json());
     const tbody = document.getElementById('tbody-logs');
     document.getElementById('badge-logs').textContent = data.logs?.length ?? 0;
     if (!data.logs?.length) {
@@ -185,8 +246,10 @@ let _ventaActualId = null;
 
 function descargarVentaActual() {
   if (!_ventaActualId) return;
+  const token = _getToken();
+  const qs = token ? `?id=${_ventaActualId}&token=${encodeURIComponent(token)}` : `?id=${_ventaActualId}`;
   const a = document.createElement('a');
-  a.href = `/api/dashboard/descargar-ventas?id=${_ventaActualId}`;
+  a.href = `/api/dashboard/descargar-ventas${qs}`;
   a.download = '';
   a.click();
 }
@@ -218,7 +281,7 @@ function cerrarVenta() {
 
 async function cargarVentas() {
   try {
-    const data  = await fetch('/api/dashboard/ventas').then(r => r.json());
+    const data  = await apiFetch('/api/dashboard/ventas').then(r => r.json());
     const tbody = document.getElementById('tbody-ventas');
     document.getElementById('badge-ventas').textContent = data.ventas?.length ?? 0;
     if (!data.ventas?.length) {
@@ -243,7 +306,12 @@ async function cargarVentas() {
 }
 
 // ── Init ──────────────────────────────────────────────────────
-conectarStream();
-cargarVentas();
-cargarLogs();
-setInterval(cargarLogs, 30_000);
+async function init() {
+  if (!_getToken()) await _pedirToken();
+  conectarStream();
+  cargarVentas();
+  cargarLogs();
+  setInterval(cargarLogs, 30_000);
+}
+
+init();

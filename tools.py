@@ -1,6 +1,7 @@
 """Implementación de herramientas para el agente de ventas de neumáticos."""
 
 import json
+import logging
 import time
 from inventory import (
     NEUMATICOS,
@@ -269,88 +270,13 @@ def generar_presupuesto(
     }, ensure_ascii=False)
 
 
-# ─── Definiciones de herramientas para Ollama ────────────────────────────────
+_app_callbacks: dict = {}
 
-HERRAMIENTAS_DEFINICION = [
-    {
-        "type": "function",
-        "function": {
-            "name": "buscar_neumaticos",
-            "description": "Busca neumáticos por medida, marca, tipo, temporada o precio.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "medida": {"type": "string"},
-                    "marca": {"type": "string"},
-                    "tipo": {"type": "string"},
-                    "temporada": {"type": "string"},
-                    "precio_maximo": {"type": "number"},
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "ver_detalle_neumatico",
-            "description": "Obtiene detalles completos de un neumático por su ID.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "neumatico_id": {"type": "string", "description": "ej: 'N001'"},
-                },
-                "required": ["neumatico_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "verificar_compatibilidad",
-            "description": "Verifica si una medida es compatible con un vehículo.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "vehiculo": {"type": "string", "description": "ej: 'Honda Civic'"},
-                    "medida": {"type": "string", "description": "ej: '225/45R17'"},
-                },
-                "required": ["vehiculo", "medida"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "obtener_recomendaciones",
-            "description": "Recomienda neumáticos según vehículo, estilo de manejo, presupuesto y prioridad.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "vehiculo": {"type": "string"},
-                    "estilo_manejo": {"type": "string"},
-                    "presupuesto_por_neumatico": {"type": "number"},
-                    "prioridad": {"type": "string"},
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "generar_presupuesto",
-            "description": "Genera un presupuesto detallado con precio total para un neumático.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "neumatico_id": {"type": "string"},
-                    "cantidad": {"type": "integer"},
-                    "incluir_instalacion": {"type": "boolean"},
-                },
-                "required": ["neumatico_id"],
-            },
-        },
-    },
-]
+
+def registrar_callbacks(**kw):
+    """Recibe las funciones de app.py para evitar imports circulares."""
+    _app_callbacks.update(kw)
+
 
 _ventas_confirmadas: dict[str, float] = {}
 _VENTA_DEDUP_TTL = 86400  # 24 horas
@@ -385,12 +311,14 @@ def confirmar_venta(
         return json.dumps({"error": resultado["error"]}, ensure_ascii=False)
 
     try:
-        from app import notificar_venta_interna, obtener_o_asignar_agente, registrar_venta
-        agente = obtener_o_asignar_agente(session_id)
-        notificar_venta_interna(neumatico, cantidad, nombre_cliente, sucursal, notas, agente=agente["nombre"])
-        registrar_venta(session_id, agente["nombre"], neumatico, cantidad, nombre_cliente, sucursal)
+        _obtener_agente    = _app_callbacks.get("obtener_o_asignar_agente")
+        _notificar_venta   = _app_callbacks.get("notificar_venta_interna")
+        _registrar_venta   = _app_callbacks.get("registrar_venta")
+        if _obtener_agente and _notificar_venta and _registrar_venta:
+            agente = _obtener_agente(session_id)
+            _notificar_venta(neumatico, cantidad, nombre_cliente, sucursal, notas, agente=agente["nombre"])
+            _registrar_venta(session_id, agente["nombre"], neumatico, cantidad, nombre_cliente, sucursal)
     except Exception as e:
-        import logging
         logging.getLogger(__name__).error(f"Error enviando notificación de venta: {e}")
 
     total = neumatico["precio"] * cantidad
@@ -410,10 +338,10 @@ def notificar_dot(
     **_,
 ) -> str:
     try:
-        from app import notificar_dot as _notificar_dot
-        _notificar_dot(session_id, neumaticos)
+        _fn = _app_callbacks.get("notificar_dot")
+        if _fn:
+            _fn(session_id, neumaticos)
     except Exception as e:
-        import logging
         logging.getLogger(__name__).error(f"Error notificando DOT: {e}")
     return json.dumps({"notificado": True}, ensure_ascii=False)
 
@@ -424,11 +352,12 @@ def escalar_a_humano(
     **_,
 ) -> str:
     try:
-        from app import notificar_escalado, obtener_historial
-        historial = obtener_historial(session_id)
-        notificar_escalado(session_id, motivo, historial)
+        _obtener_historial   = _app_callbacks.get("obtener_historial")
+        _notificar_escalado  = _app_callbacks.get("notificar_escalado")
+        if _obtener_historial and _notificar_escalado:
+            historial = _obtener_historial(session_id)
+            _notificar_escalado(session_id, motivo, historial)
     except Exception as e:
-        import logging
         logging.getLogger(__name__).error(f"Error escalando a humano: {e}")
     return json.dumps({"escalado": True, "mensaje": "Conversación derivada a un humano."}, ensure_ascii=False)
 
