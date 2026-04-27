@@ -49,7 +49,7 @@ _mem_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s 
 logging.getLogger().addHandler(_mem_handler)
 
 app = Flask(__name__)
-app.secret_key = "neumaticos-plus-secret-key-2024"
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "neumaticos-plus-secret-key-2024")
 
 # Modelo a usar (configurable)
 MODELO_LLM = MODELO_DEFAULT
