@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Deploy to EC2
       env:
         PRIVATE_KEY: ${{ secrets.EC2_PRIVATE_KEY }}
@@ -18,19 +18,35 @@ jobs:
       run: |
         echo "$PRIVATE_KEY" > github-ec2.pem && chmod 600 github-ec2.pem
         ssh -o StrictHostKeyChecking=no -i github-ec2.pem ${USER}@${HOST} '
-        echo "Current directory: $(pwd)"
-        echo "Listing home directory:"
-        ls -la ~
+          set -e
 
-        REPO_URL="https://github.com/cheloim/tireSalesAgent.git"
-        BRANCH="main"
-        REPO_DIR="$HOME/tire_sales_agent"
+          REPO_URL="https://github.com/cheloim/tireSalesAgent.git"
+          BRANCH="main"
+          REPO_DIR="$HOME/tire_sales_agent"
 
-        if [ -d "$REPO_DIR/.git" ]; then
-          cd "$REPO_DIR"
-          git pull origin "$BRANCH"
-        else
-          git clone "$REPO_URL" "$REPO_DIR"
-          cd "$REPO_DIR"
-        fi
+          echo "=== Pull código ==="
+          if [ -d "$REPO_DIR/.git" ]; then
+            cd "$REPO_DIR"
+            git pull origin "$BRANCH"
+          else
+            git clone "$REPO_URL" "$REPO_DIR"
+            cd "$REPO_DIR"
+          fi
+
+          echo "=== Virtualenv ==="
+          if [ ! -d "$REPO_DIR/.venv" ]; then
+            python3 -m venv "$REPO_DIR/.venv"
+          fi
+
+          echo "=== Dependencias ==="
+          "$REPO_DIR/.venv/bin/pip" install --upgrade pip -q
+          "$REPO_DIR/.venv/bin/pip" install -r "$REPO_DIR/requirements.txt" -q
+
+          echo "=== Restart servicios ==="
+          sudo systemctl restart tire-agent || true
+          sudo systemctl restart tire-frontend || true
+
+          echo "=== Estado ==="
+          sudo systemctl is-active tire-agent && echo "tire-agent OK" || echo "tire-agent FAIL"
+          sudo systemctl is-active tire-frontend && echo "tire-frontend OK" || echo "tire-frontend FAIL"
         '
