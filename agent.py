@@ -1,5 +1,6 @@
 """Agente de ventas de neumáticos con Google Gemini como backend LLM."""
 
+import collections
 import json
 import logging
 import os
@@ -258,7 +259,8 @@ def _comprimir_resultado_tool(texto: str) -> str:
 _TURNOS_VERBATIM = 8        # últimos N turnos se mandan completos
 _MIN_TURNOS_VIEJOS   = 4   # mínimo de turnos viejos para activar sumarización
 
-_summary_cache: dict[str, str] = {}  # "session_id:corte" -> texto resumen
+_summary_cache: collections.OrderedDict = collections.OrderedDict()  # "session_id:corte" -> texto resumen
+_SUMMARY_CACHE_MAX = 200
 
 
 def _resumir_mensajes(mensajes: list[dict]) -> str:
@@ -299,6 +301,8 @@ def _historial_a_gemini(historial: list[dict], session_id: str = "") -> list[dic
         if cache_key not in _summary_cache:
             logger.info(f"Resumiendo {corte} mensajes viejos (session={session_id or 'anon'})")
             _summary_cache[cache_key] = _resumir_mensajes(historial[:corte])
+            if len(_summary_cache) > _SUMMARY_CACHE_MAX:
+                _summary_cache.popitem(last=False)
         resumen = _summary_cache[cache_key]
         contenidos.append({"role": "user",  "parts": [{"text": f"[Resumen de la conversación anterior]\n{resumen}"}]})
         contenidos.append({"role": "model", "parts": [{"text": "Entendido, tengo el contexto."}]})

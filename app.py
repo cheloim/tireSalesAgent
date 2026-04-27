@@ -74,7 +74,7 @@ TG_NOTIFY_CHAT_ID = os.environ.get("TG_NOTIFY_CHAT_ID", "")
 WA_NOTIFY_NUMBER  = os.environ.get("WA_NOTIFY_NUMBER", "")
 
 ARGENTINA_TZ      = timezone(timedelta(hours=-3))
-MSG_FUERA_HORARIO = "Nuestro horario de atencion es de 07:30 a 23:00 te responderemos en ese horario. Neumáticos Martinez"
+MSG_FUERA_HORARIO = "Nuestro horario de atención es de 07:30 a 23:00 te responderemos en ese horario. Neumáticos Martinez"
 
 INVENTORY_WEBHOOK_SECRET = os.environ.get("INVENTORY_WEBHOOK_SECRET", "")
 
@@ -623,6 +623,17 @@ def registrar_venta(session_id: str, agente: str, neumatico: dict, cantidad: int
         conn.commit()
 
 
+from tools import registrar_callbacks as _registrar_tool_callbacks
+_registrar_tool_callbacks(
+    notificar_venta_interna=notificar_venta_interna,
+    registrar_venta=registrar_venta,
+    obtener_o_asignar_agente=obtener_o_asignar_agente,
+    obtener_historial=obtener_historial,
+    notificar_escalado=notificar_escalado,
+    notificar_dot=notificar_dot,
+)
+
+
 # ── Message buffer (debounce) ────────────────────────────────
 
 _msg_buffers: dict[str, dict] = {}
@@ -957,8 +968,16 @@ _wa_pendientes: dict[str, dict] = {}
 _wa_pendientes_lock = threading.Lock()
 
 
+_WA_PENDIENTE_TTL = 3600  # 1 hora sin confirmación → descartar
+
+
 def wa_send_message(to: str, text: str) -> str | None:
     """Envía mensaje WA y registra el message_id para tracking de fallos. Retorna el message_id."""
+    ahora = time.time()
+    with _wa_pendientes_lock:
+        expirados = [k for k, v in _wa_pendientes.items() if ahora - v.get("ts", 0) > _WA_PENDIENTE_TTL]
+        for k in expirados:
+            del _wa_pendientes[k]
     try:
         res = http.post(WA_API,
                   headers={"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"},
@@ -971,7 +990,7 @@ def wa_send_message(to: str, text: str) -> str | None:
         msg_id = res.json().get("messages", [{}])[0].get("id")
         if msg_id:
             with _wa_pendientes_lock:
-                _wa_pendientes[msg_id] = {"to": to, "text": text, "intentos": 1}
+                _wa_pendientes[msg_id] = {"to": to, "text": text, "intentos": 1, "ts": ahora}
         return msg_id
     except Exception as e:
         logger.error(f"Error enviando mensaje WhatsApp: {e}")
