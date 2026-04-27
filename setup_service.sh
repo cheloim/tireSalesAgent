@@ -8,11 +8,13 @@ APP_DIR="/home/ubuntu/tire_sales_agent"
 SERVICE="tire-agent"
 WEB_SERVICE="tire-agent-web"
 
-# Instalar dependencias Python
-if ! command -v gunicorn &>/dev/null && [ ! -f "$HOME/.local/bin/gunicorn" ]; then
-    echo "Instalando dependencias Python..."
-    pip install --user -r "$APP_DIR/requirements.txt"
+# Instalar dependencias Python en virtualenv
+echo "Configurando virtualenv..."
+if [ ! -d "$APP_DIR/.venv" ]; then
+    python3 -m venv "$APP_DIR/.venv"
 fi
+"$APP_DIR/.venv/bin/pip" install --upgrade pip -q
+"$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/requirements.txt" -q
 
 # Instalar dependencias Node.js
 if ! command -v node &>/dev/null; then
