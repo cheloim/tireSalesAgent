@@ -15,6 +15,8 @@ from datetime import datetime, timezone, timedelta
 
 import requests as http
 from flask import Flask, Response, jsonify, request, send_from_directory, session, stream_with_context
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 from agent import AGENTES, MODELO_DEFAULT, TEMPERATURA, PROMPT_VERSION, get_prompt_sistema, procesar_mensaje, transcribir_audio, verificar_gemini
 from inventory import sincronizar_inventario
@@ -55,11 +57,14 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"]   = os.environ.get("FLASK_ENV") == "production"
 
+limiter = Limiter(get_remote_address, app=app, storage_uri="memory://", default_limits=[])
+
 # Modelo a usar (configurable)
 MODELO_LLM = MODELO_DEFAULT
 
 _web_debug_mode = False
-_tg_contacts: dict[str, dict] = {}  # session_id → {name, phone} for notifications
+_tg_contacts: collections.OrderedDict = collections.OrderedDict()  # session_id → {name, phone}
+_TG_CONTACTS_MAX = 1000
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_API   = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
@@ -413,6 +418,7 @@ def estado():
 
 
 @app.route("/api/chat", methods=["POST"])
+@limiter.limit("20 per minute")
 def chat():
     """Endpoint principal de chat con streaming SSE."""
     datos = request.get_json()
@@ -861,7 +867,12 @@ def telegram_webhook():
     sender = message.get("from") or {}
     contact = message.get("contact") or {}
     sid = str(chat_id)
-    info = _tg_contacts.setdefault(sid, {"name": "", "phone": ""})
+    if sid not in _tg_contacts:
+        _tg_contacts[sid] = {"name": "", "phone": ""}
+        if len(_tg_contacts) > _TG_CONTACTS_MAX:
+            _tg_contacts.popitem(last=False)
+    _tg_contacts.move_to_end(sid)
+    info = _tg_contacts[sid]
     if not info["name"]:
         info["name"] = (
             f"@{sender['username']}" if sender.get("username")
@@ -911,59 +922,77 @@ def telegram_webhook():
     return "", 200
 
 
-def _procesar_tg(chat_id: int, session_id: str, text: str):
+def _procesar_canal(
+    texto: str,
+    session_id: str,
+    canal: str,
+    send_text_fn,
+    send_photo_fn=None,
+    send_location_fn=None,
+    send_typing_fn=None,
+):
     historial       = obtener_historial(session_id)
     conversation_id = obtener_conversation_id(session_id)
     agente          = obtener_o_asignar_agente(session_id)
-    logger.info(f"TG mensaje procesado [{chat_id}] agente={agente['nombre']}: {text[:300]}")
+    logger.info(f"[{canal}] [{session_id}] agente={agente['nombre']}: {texto[:200]}")
 
-    tg_send_typing(chat_id)
+    if send_typing_fn:
+        send_typing_fn()
 
     respuesta = ""
-    meta_tg = {}
+    meta = {}
     for intento in range(4):
         try:
-            chunks    = list(procesar_mensaje(text, historial, session_id, MODELO_LLM, agente, meta=meta_tg))
+            chunks    = list(procesar_mensaje(texto, historial, session_id, MODELO_LLM, agente, meta=meta))
             respuesta = limpiar_respuesta("".join(chunks))
             break
         except Exception as e:
-            logger.warning(f"Error LLM (intento {intento + 1}/4): {e}")
-            if intento < 3:
-                time.sleep(60)
-                tg_send_typing(chat_id)
-            else:
-                logger.error(f"LLM falló tras 4 intentos [{chat_id}]")
-                tg_send_message(chat_id, "Perdoná, tuve un problema. Intentá de nuevo en un momento.")
+            logger.warning(f"Error LLM {canal} (intento {intento + 1}/4): {e}")
+            if intento == 3:
+                send_text_fn("Perdoná, tuve un problema. Intentá de nuevo en un momento.")
                 return
+            time.sleep(60)
+            if send_typing_fn:
+                send_typing_fn()
 
     if not respuesta:
         return
 
     imagen_match    = _IMAGEN_RE.search(respuesta)
-    ubicacion_match = _UBICACION_RE.findall(respuesta)
+    ubicacion_match = _UBICACION_RE.findall(respuesta) if send_location_fn else []
     respuesta_limpia = _UBICACION_RESTO_RE.sub("", _UBICACION_RE.sub("", _IMAGEN_RE.sub("", respuesta))).strip()
 
-    if imagen_match:
-        tg_send_photo(chat_id, imagen_match.group(1))
+    if imagen_match and send_photo_fn:
+        send_photo_fn(imagen_match.group(1))
     for sucursal in ubicacion_match:
-        tg_send_location(chat_id, sucursal)
+        send_location_fn(sucursal)
 
     partes = [p.strip() for p in respuesta_limpia.split("|||") if p.strip()]
-
     for i, parte in enumerate(partes):
         if i > 0:
             time.sleep(random.uniform(1.5, 2.5))
-            tg_send_typing(chat_id)
-            time.sleep(random.uniform(1.5, 3.0))
-        tg_send_message(chat_id, parte)
+            if send_typing_fn:
+                send_typing_fn()
+                time.sleep(random.uniform(1.5, 3.0))
+        send_text_fn(parte)
 
-    historial.append({"role": "user",      "content": text})
-    historial.append({"role": "assistant", "content": respuesta})  # con tags para que el LLM recuerde haberlas enviado
-    guardar_historial(session_id, historial, canal="telegram", conversation_id=conversation_id,
+    historial.append({"role": "user",      "content": texto})
+    historial.append({"role": "assistant", "content": respuesta})
+    guardar_historial(session_id, historial, canal=canal, conversation_id=conversation_id,
                       modelo=MODELO_LLM, temperatura=TEMPERATURA, prompt_version=PROMPT_VERSION,
-                      confianza=meta_tg.get("confianza"), contexto=meta_tg.get("contexto"),
-                      memoria=meta_tg.get("memoria"),
-                      logica_negocio=",".join(meta_tg.get("logica_negocio") or []) or None)
+                      confianza=meta.get("confianza"), contexto=meta.get("contexto"),
+                      memoria=meta.get("memoria"),
+                      logica_negocio=",".join(meta.get("logica_negocio") or []) or None)
+
+
+def _procesar_tg(chat_id: int, session_id: str, text: str):
+    _procesar_canal(
+        texto=text, session_id=session_id, canal="telegram",
+        send_text_fn=lambda p: tg_send_message(chat_id, p),
+        send_photo_fn=lambda m: tg_send_photo(chat_id, m),
+        send_location_fn=lambda s: tg_send_location(chat_id, s),
+        send_typing_fn=lambda: tg_send_typing(chat_id),
+    )
 
 
 @app.route("/setup/telegram")
@@ -1162,46 +1191,11 @@ def whatsapp_webhook():
 
 
 def _procesar_wa(from_number: str, session_id: str, text: str):
-    historial       = obtener_historial(session_id)
-    conversation_id = obtener_conversation_id(session_id)
-    agente          = obtener_o_asignar_agente(session_id)
-
-    respuesta = ""
-    meta_wa = {}
-    for intento in range(4):
-        try:
-            chunks    = list(procesar_mensaje(text, historial, session_id, MODELO_LLM, agente, meta=meta_wa))
-            respuesta = limpiar_respuesta("".join(chunks))
-            break
-        except Exception as e:
-            logger.warning(f"Error LLM WhatsApp (intento {intento + 1}/4): {e}")
-            if intento == 3:
-                wa_send_message(from_number, "Perdoná, tuve un problema. Intentá de nuevo en un momento.")
-                return
-            time.sleep(60)
-
-    if not respuesta:
-        return
-
-    imagen_match     = _IMAGEN_RE.search(respuesta)
-    respuesta_limpia = _UBICACION_RE.sub("", _IMAGEN_RE.sub("", respuesta)).strip()
-
-    if imagen_match:
-        wa_send_photo(from_number, imagen_match.group(1))
-
-    partes = [p.strip() for p in respuesta_limpia.split("|||") if p.strip()]
-    for i, parte in enumerate(partes):
-        if i > 0:
-            time.sleep(random.uniform(1.5, 2.5))
-        wa_send_message(from_number, parte)
-
-    historial.append({"role": "user",      "content": text})
-    historial.append({"role": "assistant", "content": respuesta})  # con tags para que el LLM recuerde haberlas enviado
-    guardar_historial(session_id, historial, canal="whatsapp", conversation_id=conversation_id,
-                      modelo=MODELO_LLM, temperatura=TEMPERATURA, prompt_version=PROMPT_VERSION,
-                      confianza=meta_wa.get("confianza"), contexto=meta_wa.get("contexto"),
-                      memoria=meta_wa.get("memoria"),
-                      logica_negocio=",".join(meta_wa.get("logica_negocio") or []) or None)
+    _procesar_canal(
+        texto=text, session_id=session_id, canal="whatsapp",
+        send_text_fn=lambda p: wa_send_message(from_number, p),
+        send_photo_fn=lambda m: wa_send_photo(from_number, m),
+    )
 
 
 # ── Twilio helpers ────────────────────────────────────────────
@@ -1284,52 +1278,12 @@ def twilio_webhook():
 
 
 def _procesar_twilio(from_number: str, session_id: str, text: str):
-    historial       = obtener_historial(session_id)
-    conversation_id = obtener_conversation_id(session_id)
-    agente          = obtener_o_asignar_agente(session_id)
-
-    respuesta = ""
-    meta_twilio = {}
-    for intento in range(4):
-        try:
-            chunks    = list(procesar_mensaje(text, historial, session_id, MODELO_LLM, agente, meta=meta_twilio))
-            respuesta = limpiar_respuesta("".join(chunks))
-            break
-        except Exception as e:
-            logger.warning(f"Error LLM Twilio (intento {intento + 1}/4): {e}")
-            if intento == 3:
-                twilio_send_message(from_number, "Perdoná, tuve un problema. Intentá de nuevo en un momento.")
-                return
-            time.sleep(60)
-
-    if not respuesta:
-        return
-
-    logger.info(f"Respuesta agente Twilio [{from_number}]: {respuesta[:300]}")
-
-    imagen_match    = _IMAGEN_RE.search(respuesta)
-    ubicacion_match = _UBICACION_RE.findall(respuesta)
-    logger.info(f"Tags Twilio — imagen: {imagen_match}, ubicaciones: {ubicacion_match}")
-    respuesta_limpia = _UBICACION_RESTO_RE.sub("", _UBICACION_RE.sub("", _IMAGEN_RE.sub("", respuesta))).strip()
-
-    if imagen_match:
-        twilio_send_photo(from_number, imagen_match.group(1))
-    for sucursal in ubicacion_match:
-        twilio_send_location(from_number, sucursal)
-
-    partes = [p.strip() for p in respuesta_limpia.split("|||") if p.strip()]
-    for i, parte in enumerate(partes):
-        if i > 0:
-            time.sleep(random.uniform(1.5, 2.5))
-        twilio_send_message(from_number, parte)
-
-    historial.append({"role": "user",      "content": text})
-    historial.append({"role": "assistant", "content": respuesta})  # con tags para que el LLM recuerde haberlas enviado
-    guardar_historial(session_id, historial, canal="whatsapp", conversation_id=conversation_id,
-                      modelo=MODELO_LLM, temperatura=TEMPERATURA, prompt_version=PROMPT_VERSION,
-                      confianza=meta_twilio.get("confianza"), contexto=meta_twilio.get("contexto"),
-                      memoria=meta_twilio.get("memoria"),
-                      logica_negocio=",".join(meta_twilio.get("logica_negocio") or []) or None)
+    _procesar_canal(
+        texto=text, session_id=session_id, canal="whatsapp",
+        send_text_fn=lambda p: twilio_send_message(from_number, p),
+        send_photo_fn=lambda m: twilio_send_photo(from_number, m),
+        send_location_fn=lambda s: twilio_send_location(from_number, s),
+    )
 
 
 # ── Webhook de inventario (Tango / CRM) ─────────────────────
@@ -1349,7 +1303,7 @@ def inventario_webhook():
       }
     """
     secret_recibido = request.headers.get("X-Webhook-Secret", "")
-    if INVENTORY_WEBHOOK_SECRET and secret_recibido != INVENTORY_WEBHOOK_SECRET:
+    if INVENTORY_WEBHOOK_SECRET and not hmac.compare_digest(secret_recibido, INVENTORY_WEBHOOK_SECRET):
         logger.warning("Webhook inventario: secret inválido")
         return jsonify({"error": "Unauthorized"}), 401
 
@@ -1723,7 +1677,6 @@ def server_logs_stream():
 
 
 if __name__ == "__main__":
-    _init_db()
     print("=" * 60)
     print("  Neumáticos Martinez - API Backend (Flask)")
     print("=" * 60)
