@@ -44,9 +44,9 @@ jobs:
 
           echo "=== Restart servicios ==="
           sudo systemctl restart tire-agent || true
-          sudo systemctl restart tire-frontend || true
+          sudo systemctl restart tire-agent-web || true
 
           echo "=== Estado ==="
           sudo systemctl is-active tire-agent && echo "tire-agent OK" || echo "tire-agent FAIL"
-          sudo systemctl is-active tire-frontend && echo "tire-frontend OK" || echo "tire-frontend FAIL"
+          sudo systemctl is-active tire-agent-web && echo "tire-agent-web OK" || echo "tire-agent-web FAIL"
         '
