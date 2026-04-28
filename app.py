@@ -99,6 +99,7 @@ def _verificar_token_dashboard():
 
 ARGENTINA_TZ      = timezone(timedelta(hours=-3))
 MSG_FUERA_HORARIO = "Nuestro horario de atención es de 07:30 a 23:00 te responderemos en ese horario. Neumáticos Martinez"
+MSG_ESCALADO      = "Tu consulta fue derivada a nuestro equipo. En breve te contactamos."
 
 INVENTORY_WEBHOOK_SECRET = os.environ.get("INVENTORY_WEBHOOK_SECRET", "")
 
@@ -454,7 +455,7 @@ def chat():
 
     def generar():
         if es_escalado(session_id):
-            data = json.dumps({"tipo": "texto", "contenido": "Tu consulta fue derivada a nuestro equipo. En breve te contactamos."}, ensure_ascii=False)
+            data = json.dumps({"tipo": "texto", "contenido": MSG_ESCALADO}, ensure_ascii=False)
             yield f"data: {data}\n\n"
             yield 'data: {"tipo": "fin"}\n\n'
             return
@@ -939,6 +940,7 @@ def telegram_webhook():
     session_id = str(chat_id)
     if es_escalado(session_id):
         logger.info(f"TG sesión escalada, mensaje ignorado [{session_id}]")
+        tg_send_message(chat_id, MSG_ESCALADO)
         return "", 200
     if not es_horario_atencion():
         if not _hay_mensaje_pendiente(session_id):
@@ -1210,6 +1212,7 @@ def whatsapp_webhook():
     session_id = f"wa_{from_number}"
     if es_escalado(session_id):
         logger.info(f"WA sesión escalada, mensaje ignorado [{session_id}]")
+        wa_send_message(from_number, MSG_ESCALADO)
         return "", 200
     if not es_horario_atencion():
         if not _hay_mensaje_pendiente(session_id):
@@ -1300,6 +1303,7 @@ def twilio_webhook():
     session_id = f"twilio_{from_number}"
     if es_escalado(session_id):
         logger.info(f"Twilio sesión escalada, mensaje ignorado [{session_id}]")
+        twilio_send_message(from_number, MSG_ESCALADO)
         return "", 200
     if not es_horario_atencion():
         if not _hay_mensaje_pendiente(session_id):
