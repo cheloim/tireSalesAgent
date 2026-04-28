@@ -625,6 +625,12 @@ def notificar_escalado(session_id: str, motivo: str, historial: list[dict]):
             lineas.append(f"[{rol}] {msg['content'][:600]}")
         _enviar_notificacion("Conversación:\n\n" + "\n\n".join(lineas))
 
+    cb = f"resolver_{session_id}"
+    if TG_NOTIFY_CHAT_ID:
+        tg_send_with_button(int(TG_NOTIFY_CHAT_ID), "¿Marcar como resuelto?", "✅ Resolver", cb)
+    if WA_NOTIFY_NUMBER:
+        wa_send_button(WA_NOTIFY_NUMBER, "¿Marcar como resuelto?", "✅ Resolver", cb)
+
 
 def notificar_venta_interna(neumatico: dict, cantidad: int, nombre_cliente: str, sucursal: str, notas: str, agente: str = ""):
     from datetime import datetime
@@ -878,10 +884,58 @@ def tg_send_message(chat_id: int, text: str):
         logger.error(f"Error enviando mensaje Telegram: {e}")
 
 
+def tg_send_with_button(chat_id: int, text: str, button_text: str, callback_data: str):
+    try:
+        http.post(f"{TELEGRAM_API}/sendMessage", json={
+            "chat_id": chat_id,
+            "text": text,
+            "reply_markup": {"inline_keyboard": [[{"text": button_text, "callback_data": callback_data}]]},
+        }, timeout=10)
+    except Exception as e:
+        logger.error(f"Error enviando mensaje TG con botón: {e}")
+
+
+def tg_answer_callback(callback_query_id: str, text: str = ""):
+    try:
+        http.post(f"{TELEGRAM_API}/answerCallbackQuery",
+                  json={"callback_query_id": callback_query_id, "text": text}, timeout=10)
+    except Exception as e:
+        logger.error(f"Error respondiendo callback TG: {e}")
+
+
+def wa_send_button(to: str, body: str, button_text: str, button_id: str):
+    try:
+        http.post(WA_API,
+            headers={"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"},
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "interactive",
+                "interactive": {
+                    "type": "button",
+                    "body": {"text": body},
+                    "action": {"buttons": [{"type": "reply", "reply": {"id": button_id, "title": button_text}}]},
+                },
+            }, timeout=10)
+    except Exception as e:
+        logger.error(f"Error enviando botón WA: {e}")
+
+
 @app.route("/webhook/telegram", methods=["POST"])
 def telegram_webhook():
     update  = request.get_json(silent=True) or {}
     logger.info(f"TG update keys: {list(update.keys())}")
+
+    cb = update.get("callback_query")
+    if cb:
+        data = cb.get("data", "")
+        if data.startswith("resolver_"):
+            sid = data[len("resolver_"):]
+            marcar_escalado(sid, valor=False)
+            tg_answer_callback(cb["id"], "✅ Sesión reactivada")
+            logger.info(f"TG callback: sesión {sid} resuelta por operador")
+        return "", 200
+
     message = update.get("message") or update.get("edited_message")
     if not message:
         return "", 200
@@ -1180,6 +1234,16 @@ def whatsapp_webhook():
 
     from_number = message["from"]
     msg_type    = message.get("type")
+
+    if msg_type == "interactive":
+        btn = (message.get("interactive") or {}).get("button_reply") or {}
+        btn_id = btn.get("id", "")
+        if btn_id.startswith("resolver_") and from_number == WA_NOTIFY_NUMBER:
+            sid = btn_id[len("resolver_"):]
+            marcar_escalado(sid, valor=False)
+            wa_send_message(WA_NOTIFY_NUMBER, f"✅ Sesión {sid} reactivada.")
+            logger.info(f"WA button: sesión {sid} resuelta por operador")
+        return "", 200
 
     if msg_type == "text":
         text = message["text"]["body"].strip()
