@@ -354,9 +354,12 @@ def escalar_a_humano(
     try:
         _obtener_historial   = _app_callbacks.get("obtener_historial")
         _notificar_escalado  = _app_callbacks.get("notificar_escalado")
+        _marcar_escalado     = _app_callbacks.get("marcar_escalado")
         if _obtener_historial and _notificar_escalado:
             historial = _obtener_historial(session_id)
             _notificar_escalado(session_id, motivo, historial)
+        if _marcar_escalado:
+            _marcar_escalado(session_id, True)
     except Exception as e:
         logging.getLogger(__name__).error(f"Error escalando a humano: {e}")
     return json.dumps({"escalado": True, "mensaje": "Conversación derivada a un humano."}, ensure_ascii=False)

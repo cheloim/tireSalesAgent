@@ -99,6 +99,7 @@ def _verificar_token_dashboard():
 
 ARGENTINA_TZ      = timezone(timedelta(hours=-3))
 MSG_FUERA_HORARIO = "Nuestro horario de atención es de 07:30 a 23:00 te responderemos en ese horario. Neumáticos Martinez"
+MSG_ESCALADO      = "Tu consulta fue derivada a nuestro equipo. En breve te contactamos."
 
 INVENTORY_WEBHOOK_SECRET = os.environ.get("INVENTORY_WEBHOOK_SECRET", "")
 
@@ -156,8 +157,9 @@ def _init_db():
             if col not in cols_conv:
                 conn.execute(f"ALTER TABLE conversations ADD COLUMN {col} {tipo}")
         cols_hist = {r[1] for r in conn.execute("PRAGMA table_info(historiales)").fetchall()}
-        if "debug" not in cols_hist:
-            conn.execute("ALTER TABLE historiales ADD COLUMN debug INTEGER DEFAULT 0")
+        for col, tipo in [("debug", "INTEGER DEFAULT 0"), ("escalado", "INTEGER DEFAULT 0")]:
+            if col not in cols_hist:
+                conn.execute(f"ALTER TABLE historiales ADD COLUMN {col} {tipo}")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS inventario_overrides (
                 neumatico_id    TEXT PRIMARY KEY,
@@ -400,6 +402,23 @@ def obtener_o_asignar_agente(session_id: str) -> dict:
         return agente
 
 
+def marcar_escalado(session_id: str, valor: bool = True):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE historiales SET escalado = ? WHERE session_id = ?",
+            (1 if valor else 0, session_id)
+        )
+        conn.commit()
+
+
+def es_escalado(session_id: str) -> bool:
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT escalado FROM historiales WHERE session_id = ?", (session_id,)
+        ).fetchone()
+    return bool(row and row[0])
+
+
 def obtener_session_id() -> str:
     if "session_id" not in session:
         session["session_id"] = str(uuid.uuid4())
@@ -435,6 +454,11 @@ def chat():
     conversation_id = obtener_conversation_id(session_id)
 
     def generar():
+        if es_escalado(session_id):
+            data = json.dumps({"tipo": "texto", "contenido": MSG_ESCALADO}, ensure_ascii=False)
+            yield f"data: {data}\n\n"
+            yield 'data: {"tipo": "fin"}\n\n'
+            return
         if not es_horario_atencion():
             data = json.dumps({"tipo": "texto", "contenido": MSG_FUERA_HORARIO}, ensure_ascii=False)
             yield f"data: {data}\n\n"
@@ -601,6 +625,12 @@ def notificar_escalado(session_id: str, motivo: str, historial: list[dict]):
             lineas.append(f"[{rol}] {msg['content'][:600]}")
         _enviar_notificacion("Conversación:\n\n" + "\n\n".join(lineas))
 
+    cb = f"resolver_{session_id}"
+    if TG_NOTIFY_CHAT_ID:
+        tg_send_with_button(int(TG_NOTIFY_CHAT_ID), "¿Marcar como resuelto?", "✅ Resolver", cb)
+    if WA_NOTIFY_NUMBER:
+        wa_send_button(WA_NOTIFY_NUMBER, "¿Marcar como resuelto?", "✅ Resolver", cb)
+
 
 def notificar_venta_interna(neumatico: dict, cantidad: int, nombre_cliente: str, sucursal: str, notas: str, agente: str = ""):
     from datetime import datetime
@@ -656,6 +686,7 @@ _registrar_tool_callbacks(
     obtener_historial=obtener_historial,
     notificar_escalado=notificar_escalado,
     notificar_dot=notificar_dot,
+    marcar_escalado=marcar_escalado,
 )
 
 
@@ -853,10 +884,58 @@ def tg_send_message(chat_id: int, text: str):
         logger.error(f"Error enviando mensaje Telegram: {e}")
 
 
+def tg_send_with_button(chat_id: int, text: str, button_text: str, callback_data: str):
+    try:
+        http.post(f"{TELEGRAM_API}/sendMessage", json={
+            "chat_id": chat_id,
+            "text": text,
+            "reply_markup": {"inline_keyboard": [[{"text": button_text, "callback_data": callback_data}]]},
+        }, timeout=10)
+    except Exception as e:
+        logger.error(f"Error enviando mensaje TG con botón: {e}")
+
+
+def tg_answer_callback(callback_query_id: str, text: str = ""):
+    try:
+        http.post(f"{TELEGRAM_API}/answerCallbackQuery",
+                  json={"callback_query_id": callback_query_id, "text": text}, timeout=10)
+    except Exception as e:
+        logger.error(f"Error respondiendo callback TG: {e}")
+
+
+def wa_send_button(to: str, body: str, button_text: str, button_id: str):
+    try:
+        http.post(WA_API,
+            headers={"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"},
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "interactive",
+                "interactive": {
+                    "type": "button",
+                    "body": {"text": body},
+                    "action": {"buttons": [{"type": "reply", "reply": {"id": button_id, "title": button_text}}]},
+                },
+            }, timeout=10)
+    except Exception as e:
+        logger.error(f"Error enviando botón WA: {e}")
+
+
 @app.route("/webhook/telegram", methods=["POST"])
 def telegram_webhook():
     update  = request.get_json(silent=True) or {}
     logger.info(f"TG update keys: {list(update.keys())}")
+
+    cb = update.get("callback_query")
+    if cb:
+        data = cb.get("data", "")
+        if data.startswith("resolver_"):
+            sid = data[len("resolver_"):]
+            marcar_escalado(sid, valor=False)
+            tg_answer_callback(cb["id"], "✅ Sesión reactivada")
+            logger.info(f"TG callback: sesión {sid} resuelta por operador")
+        return "", 200
+
     message = update.get("message") or update.get("edited_message")
     if not message:
         return "", 200
@@ -913,6 +992,10 @@ def telegram_webhook():
         return "", 200
 
     session_id = str(chat_id)
+    if es_escalado(session_id):
+        logger.info(f"TG sesión escalada, mensaje ignorado [{session_id}]")
+        tg_send_message(chat_id, MSG_ESCALADO)
+        return "", 200
     if not es_horario_atencion():
         if not _hay_mensaje_pendiente(session_id):
             tg_send_message(chat_id, MSG_FUERA_HORARIO)
@@ -1152,6 +1235,16 @@ def whatsapp_webhook():
     from_number = message["from"]
     msg_type    = message.get("type")
 
+    if msg_type == "interactive":
+        btn = (message.get("interactive") or {}).get("button_reply") or {}
+        btn_id = btn.get("id", "")
+        if btn_id.startswith("resolver_") and from_number == WA_NOTIFY_NUMBER:
+            sid = btn_id[len("resolver_"):]
+            marcar_escalado(sid, valor=False)
+            wa_send_message(WA_NOTIFY_NUMBER, f"✅ Sesión {sid} reactivada.")
+            logger.info(f"WA button: sesión {sid} resuelta por operador")
+        return "", 200
+
     if msg_type == "text":
         text = message["text"]["body"].strip()
     elif msg_type == "audio":
@@ -1181,6 +1274,10 @@ def whatsapp_webhook():
         return "", 200
 
     session_id = f"wa_{from_number}"
+    if es_escalado(session_id):
+        logger.info(f"WA sesión escalada, mensaje ignorado [{session_id}]")
+        wa_send_message(from_number, MSG_ESCALADO)
+        return "", 200
     if not es_horario_atencion():
         if not _hay_mensaje_pendiente(session_id):
             wa_send_message(from_number, MSG_FUERA_HORARIO)
@@ -1268,6 +1365,10 @@ def twilio_webhook():
         return "", 200
 
     session_id = f"twilio_{from_number}"
+    if es_escalado(session_id):
+        logger.info(f"Twilio sesión escalada, mensaje ignorado [{session_id}]")
+        twilio_send_message(from_number, MSG_ESCALADO)
+        return "", 200
     if not es_horario_atencion():
         if not _hay_mensaje_pendiente(session_id):
             twilio_send_message(from_number, MSG_FUERA_HORARIO)
@@ -1416,7 +1517,7 @@ def _metricas_data() -> dict:
 def _chats_data() -> list:
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute("""
-            SELECT session_id, agente, canal, actualizado, mensajes, debug
+            SELECT session_id, agente, canal, actualizado, mensajes, debug, escalado
             FROM historiales
             WHERE actualizado >= datetime('now', 'localtime', '-2 hours')
             ORDER BY actualizado DESC LIMIT 50
@@ -1428,6 +1529,7 @@ def _chats_data() -> list:
         "actualizado": r[3],
         "mensajes":    _msg_count(r[4]),
         "debug":       bool(r[5]),
+        "escalado":    bool(r[6]),
     } for r in rows]
 
 
@@ -1535,6 +1637,13 @@ def dashboard_ventas():
         "cantidad": r[5], "total":  r[6], "sucursal": r[7] or "—",
         "cliente":  r[8] or "—", "fecha": r[9],
     } for r in rows]})
+
+
+@app.route("/api/dashboard/sesion/<session_id>/resolver", methods=["POST"])
+def dashboard_resolver_escalado(session_id):
+    marcar_escalado(session_id, valor=False)
+    logger.info(f"Sesión reactivada desde dashboard: {session_id}")
+    return jsonify({"ok": True, "session_id": session_id})
 
 
 @app.route("/api/dashboard/stream")
