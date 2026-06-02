@@ -4,23 +4,28 @@
 
 set -e
 
-APP_DIR="/home/ubuntu/tire_sales_agent"
-SERVICE="tire-agent"
-WEB_SERVICE="tire-agent-web"
+APP_USER=$(whoami)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SERVICE_NAME="tire-agent"
+WEB_SERVICE_NAME="tire-agent-web"
+
+echo "=== Configuracion detectada ==="
+echo "  Usuario: $APP_USER"
+echo "  Directorio: $SCRIPT_DIR"
+echo ""
 
 # Verificar que python3-venv esté instalado
-if ! python3 -m venv --help &>/dev/null; then
-    echo "python3-venv no encontrado. Instalando..."
-    sudo apt-get install -y python3-venv
+if ! python3.11 -m venv --help &>/dev/null; then
+    echo "python3.11 no encontrado. Instalando..."
+    sudo apt-get install -y python3.11 python3.11-venv python3.11-dev
 fi
 
-# Instalar dependencias Python en virtualenv
 echo "Configurando virtualenv..."
-if [ ! -d "$APP_DIR/.venv" ]; then
-    python3 -m venv "$APP_DIR/.venv"
+if [ ! -d "$SCRIPT_DIR/.venv" ]; then
+    python3.11 -m venv "$SCRIPT_DIR/.venv"
 fi
-"$APP_DIR/.venv/bin/pip" install --upgrade pip -q
-"$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/requirements.txt" -q
+"$SCRIPT_DIR/.venv/bin/pip" install --upgrade pip -q
+"$SCRIPT_DIR/.venv/bin/pip" install -r "$SCRIPT_DIR/requirements.txt" -q
 
 # Instalar dependencias Node.js
 if ! command -v node &>/dev/null; then
@@ -30,19 +35,65 @@ if ! command -v node &>/dev/null; then
 fi
 
 echo "Instalando dependencias npm..."
-cd "$APP_DIR" && npm install --omit=dev
+cd "$SCRIPT_DIR" && npm install --omit=dev
 
-# Copiar y habilitar servicios
-sudo cp "$APP_DIR/$SERVICE.service" /etc/systemd/system/
-sudo cp "$APP_DIR/$WEB_SERVICE.service" /etc/systemd/system/
+# Generar y copiar servicio tire-agent
+echo "Generando servicios systemd..."
+cat > /tmp/$SERVICE_NAME.service <<EOF
+[Unit]
+Description=Tire Sales Agent (Gunicorn/Flask)
+After=network.target
+
+[Service]
+Type=simple
+User=$APP_USER
+WorkingDirectory=$SCRIPT_DIR
+EnvironmentFile=$SCRIPT_DIR/.env
+ExecStart=$SCRIPT_DIR/.venv/bin/gunicorn -w 1 -k gthread --threads 4 --timeout 300 app:app -b 0.0.0.0:5000
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tire-agent
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Generar y copiar servicio tire-agent-web
+cat > /tmp/$WEB_SERVICE_NAME.service <<EOF
+[Unit]
+Description=Tire Sales Agent – Frontend (Node.js/Express)
+After=network.target tire-agent.service
+Requires=tire-agent.service
+
+[Service]
+Type=simple
+User=$APP_USER
+WorkingDirectory=$SCRIPT_DIR
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tire-agent-web
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo cp /tmp/$SERVICE_NAME.service /etc/systemd/system/
+sudo cp /tmp/$WEB_SERVICE_NAME.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable "$SERVICE" "$WEB_SERVICE"
-sudo systemctl start "$SERVICE" "$WEB_SERVICE"
+sudo systemctl enable "$SERVICE_NAME" "$WEB_SERVICE_NAME"
+sudo systemctl start "$SERVICE_NAME" "$WEB_SERVICE_NAME"
 
 echo ""
-echo "Servicios instalados."
-echo "  Flask/API:   sudo systemctl status $SERVICE"
-echo "  Frontend:    sudo systemctl status $WEB_SERVICE"
-echo "  Logs API:    sudo journalctl -u $SERVICE -f"
-echo "  Logs Web:    sudo journalctl -u $WEB_SERVICE -f"
+echo "=== Servicios instalados ==="
+echo "  Usuario: $APP_USER"
+echo "  Directorio: $SCRIPT_DIR"
+echo "  Flask/API:   sudo systemctl status $SERVICE_NAME"
+echo "  Frontend:    sudo systemctl status $WEB_SERVICE_NAME"
+echo "  Logs API:    journalctl -u $SERVICE_NAME -f"
+echo "  Logs Web:    journalctl -u $WEB_SERVICE_NAME -f"
 echo "  Dashboard:   ssh -L 8080:localhost:8080 ubuntu@<EC2-IP>"
