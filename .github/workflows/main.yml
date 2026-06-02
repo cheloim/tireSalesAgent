@@ -17,6 +17,10 @@ jobs:
         USER: ${{ secrets.EC2_USER }}
       run: |
         echo "$PRIVATE_KEY" > github-ec2.pem && chmod 600 github-ec2.pem
+
+        scp -o StrictHostKeyChecking=no -i github-ec2.pem deploy/install-services.sh ${USER}@${HOST}:/tmp/install-services.sh
+        scp -o StrictHostKeyChecking=no -i github-ec2.pem .env ${USER}@${HOST}:/tmp/.env 2>/dev/null || true
+
         ssh -o StrictHostKeyChecking=no -i github-ec2.pem ${USER}@${HOST} '
           set -e
 
@@ -61,65 +65,6 @@ jobs:
           echo "=== Dependencias Node ==="
           cd "$REPO_DIR" && npm install --omit=dev --silent
 
-          echo "=== Generar y copiar servicios systemd ==="
-          APP_USER=$(whoami)
-          SCRIPT_DIR="$REPO_DIR"
-
-          cat > /tmp/tire-agent.service <<-EOF
-[Unit]
-Description=Tire Sales Agent (Gunicorn/Flask)
-After=network.target
-
-[Service]
-Type=simple
-User=$APP_USER
-WorkingDirectory=$SCRIPT_DIR
-EnvironmentFile=$SCRIPT_DIR/.env
-ExecStart=$SCRIPT_DIR/.venv/bin/gunicorn -w 1 -k gthread --threads 4 --timeout 300 app:app -b 0.0.0.0:5000
-Restart=on-failure
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=tire-agent
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-          cat > /tmp/tire-agent-web.service <<-EOF
-[Unit]
-Description=Tire Sales Agent – Frontend (Node.js/Express)
-After=network.target tire-agent.service
-Requires=tire-agent.service
-
-[Service]
-Type=simple
-User=$APP_USER
-WorkingDirectory=$SCRIPT_DIR
-ExecStart=/usr/bin/node server.js
-Restart=on-failure
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=tire-agent-web
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-          sudo cp /tmp/tire-agent.service /etc/systemd/system/
-          sudo cp /tmp/tire-agent-web.service /etc/systemd/system/
-          sudo systemctl daemon-reload
-
-          echo "=== Restart servicios ==="
-          sudo systemctl restart tire-agent
-          sudo systemctl restart tire-agent-web
-
-          echo "=== Health check ==="
-          sleep 3
-          curl -sf http://localhost:5000/api/estado && echo "API OK" || echo "WARN: API no responde"
-
-          echo "=== Estado ==="
-          sudo systemctl is-active tire-agent    && echo "tire-agent OK"     || echo "tire-agent FAIL"
-          sudo systemctl is-active tire-agent-web && echo "tire-agent-web OK" || echo "tire-agent-web FAIL"
+          echo "=== Ejecutar install-services.sh ==="
+          bash /tmp/install-services.sh
         '
