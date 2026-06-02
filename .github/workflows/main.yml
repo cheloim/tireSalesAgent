@@ -22,7 +22,7 @@ jobs:
 
           REPO_URL="https://github.com/cheloim/tireSalesAgent.git"
           BRANCH="main"
-          REPO_DIR="$HOME/tire_sales_agent"
+          REPO_DIR="$HOME/tireSalesAgent"
 
           echo "=== Verificar .env ==="
           if [ ! -f "$REPO_DIR/.env" ]; then
