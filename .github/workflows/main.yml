@@ -65,7 +65,7 @@ jobs:
           APP_USER=$(whoami)
           SCRIPT_DIR="$REPO_DIR"
 
-          cat > /tmp/tire-agent.service <<EOF
+          cat > /tmp/tire-agent.service <<-EOF
 [Unit]
 Description=Tire Sales Agent (Gunicorn/Flask)
 After=network.target
@@ -86,7 +86,7 @@ SyslogIdentifier=tire-agent
 WantedBy=multi-user.target
 EOF
 
-          cat > /tmp/tire-agent-web.service <<EOF
+          cat > /tmp/tire-agent-web.service <<-EOF
 [Unit]
 Description=Tire Sales Agent – Frontend (Node.js/Express)
 After=network.target tire-agent.service
