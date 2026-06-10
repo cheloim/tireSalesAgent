@@ -101,7 +101,22 @@ jobs:
             [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
             nvm install 22 && nvm alias default 22
           fi
+          echo "NODE_BIN=$(which node)" > /tmp/node_path.txt
+          echo "Node path: $(cat /tmp/node_path.txt)"
           cd "$REPO_DIR" && npm install --omit=dev --silent
+
+          echo "=== Configurar ngrok ==="
+          mkdir -p ~/.config/ngrok
+          cat > ~/.config/ngrok/ngrok.yml <<NGROKEOF
+version: 3
+agent:
+    authtoken: $NGROK_ENDPOINT_AUTHTOKEN
+tunnels:
+  app:
+    proto: http
+    addr: 5000
+NGROKEOF
+          echo "ngrok config creado"
 
           echo "=== Ejecutar install-services.sh ==="
           bash /tmp/install-services.sh
