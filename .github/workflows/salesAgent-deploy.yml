@@ -1,0 +1,101 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  REPO_URL: "https://github.com/cheloim/tireSalesAgent.git"
+  REPO_BRANCH: "main"
+  REPO_DIR: "$HOME/tireSalesAgent"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Configure SSH
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/server_key
+        chmod 600 ~/.ssh/server_key
+        ssh-keyscan -H -p 43422 ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+    - name: Transfer deployment files
+      run: |
+        scp -o StrictHostKeyChecking=no -i ~/.ssh/server_key -P 43422 \
+          deploy/install-services.sh \
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/
+
+        scp -o StrictHostKeyChecking=no -i ~/.ssh/server_key -P 43422 \
+          .env ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/.env 2>/dev/null || true
+
+    - name: Deploy application
+      run: |
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/server_key -p 43422 \
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} '
+          set -e
+
+          echo "=== Clonar / Pull repo ==="
+          if [ -d "$REPO_DIR/.git" ]; then
+            cd "$REPO_DIR"
+            git pull origin "$REPO_BRANCH"
+          else
+            git clone "$REPO_URL" "$REPO_DIR"
+            cd "$REPO_DIR"
+          fi
+
+          echo "=== Verificar .env ==="
+          if [ ! -f "$REPO_DIR/.env" ]; then
+            echo "ERROR: .env no encontrado en $REPO_DIR — el deploy se cancela." >&2
+            exit 1
+          fi
+
+          echo "=== Backup DB ==="
+          if [ -f "$REPO_DIR/conversaciones.db" ]; then
+            cp "$REPO_DIR/conversaciones.db" "$REPO_DIR/conversaciones.db.bak"
+            echo "Backup creado: conversaciones.db.bak"
+          fi
+
+          echo "=== Virtualenv ==="
+          if ! python3.11 -m venv --help &>/dev/null; then
+            echo "python3.11 no encontrado. Instalando..."
+            if command -v apt-get &>/dev/null; then
+              sudo apt-get install -y python3.11 python3.11-venv python3.11-dev
+            elif command -v yum &>/dev/null; then
+              sudo yum install -y python311 python311-venv python311-devel
+            elif command -v dnf &>/dev/null; then
+              sudo dnf install -y python311 python311-venv python311-devel
+            fi
+          fi
+          if [ ! -d "$REPO_DIR/.venv" ]; then
+            python3.11 -m venv "$REPO_DIR/.venv"
+          fi
+
+          echo "=== Dependencias Python ==="
+          "$REPO_DIR/.venv/bin/python" -m pip install --upgrade pip -q
+          "$REPO_DIR/.venv/bin/python" -m pip install -r "$REPO_DIR/requirements.txt" -q
+
+          echo "=== Dependencias Node ==="
+          if ! command -v node &>/dev/null || ! node --version | grep -q "^v22"; then
+            echo "Node.js 22 no encontrado. Instalando con nvm..."
+            export NVM_DIR="$HOME/.nvm"
+            if [ ! -d "$NVM_DIR" ]; then
+              curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
+            fi
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            nvm install 22 && nvm alias default 22
+          fi
+          cd "$REPO_DIR" && npm install --omit=dev --silent
+
+          echo "=== Ejecutar install-services.sh ==="
+          bash /tmp/install-services.sh
+        '
+
+    - name: Verify deployment
+      run: |
+        sleep 5
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/server_key -p 43422 \
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+          'curl -sf http://localhost:5000/api/estado && echo " OK" || exit 1'
