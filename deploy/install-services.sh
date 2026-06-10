@@ -123,8 +123,14 @@ if ! command -v ngrok &>/dev/null; then
 fi
 
 echo "Instalando servicio ngrok..."
-sudo ngrok service install --config ~/.config/ngrok/ngrok.yml
-sudo systemctl restart ngrok
+if systemctl list-unit-files | grep -q "^ngrok.service"; then
+    echo "ngrok.service ya existe, recargando..."
+    sudo systemctl daemon-reload
+    sudo systemctl restart ngrok
+else
+    sudo ngrok service install --config ~/.config/ngrok/ngrok.yml
+    sudo systemctl restart ngrok
+fi
 
 echo "=== Logs ngrok ==="
 journalctl -u ngrok --no-pager -n 10 || true
