@@ -26,6 +26,7 @@ jobs:
       run: |
         scp -o StrictHostKeyChecking=no -i ~/.ssh/server_key -P 43422 \
           deploy/install-services.sh \
+          deploy/configure-ngrok.sh \
           ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/
 
         scp -o StrictHostKeyChecking=no -i ~/.ssh/server_key -P 43422 \
@@ -106,17 +107,7 @@ jobs:
           cd "$REPO_DIR" && npm install --omit=dev --silent
 
           echo "=== Configurar ngrok ==="
-          mkdir -p ~/.config/ngrok
-          cat > ~/.config/ngrok/ngrok.yml <<-'NGROKEOF'
-version: 3
-agent:
-    authtoken: $NGROK_ENDPOINT_AUTHTOKEN
-tunnels:
-  app:
-    proto: http
-    addr: 5000
-NGROKEOF
-          echo "ngrok config creado"
+          bash /tmp/configure-ngrok.sh
 
           echo "=== Ejecutar install-services.sh ==="
           bash /tmp/install-services.sh
