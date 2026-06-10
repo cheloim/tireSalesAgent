@@ -21,6 +21,7 @@ jobs:
     - name: Prepare .env file
       run: |
         echo "${{ secrets.SERVER_ENV_FILE }}" > /tmp/.env
+        echo "${{ secrets.NGROK_ENDPOINT_AUTHTOKEN }}" > /tmp/ngrok_token
 
     - name: Transfer deployment files
       run: |
@@ -31,7 +32,8 @@ jobs:
 
         scp -o StrictHostKeyChecking=no -i ~/.ssh/server_key -P 43422 \
           /tmp/.env \
-          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/.env
+          /tmp/ngrok_token \
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/
 
     - name: Deploy application
       run: |
@@ -107,6 +109,7 @@ jobs:
           cd "$REPO_DIR" && npm install --omit=dev --silent
 
           echo "=== Configurar ngrok ==="
+          export NGROK_ENDPOINT_AUTHTOKEN=$(cat /tmp/ngrok_token)
           bash /tmp/configure-ngrok.sh
 
           echo "=== Ejecutar install-services.sh ==="

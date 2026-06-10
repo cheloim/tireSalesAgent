@@ -16,5 +16,5 @@ tunnels:
     addr: 5000
 EOF
 
-sed -i "s|AUTHTOKEN_PLACEHOLDER|$NGROK_ENDPOINT_AUTHTOKEN|g" ~/.config/ngrok/ngrok.yml
+sed -i "s|AUTHTOKEN_PLACEHOLDER|$(cat /tmp/ngrok_token)|g" ~/.config/ngrok/ngrok.yml
 echo "ngrok config creado en ~/.config/ngrok/ngrok.yml"
