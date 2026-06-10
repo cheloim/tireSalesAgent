@@ -3,11 +3,7 @@ name: Deploy to Server
 on:
   push:
     branches: [ main ]
-
-env:
-  REPO_URL: "https://github.com/cheloim/tireSalesAgent.git"
-  REPO_BRANCH: "main"
-  REPO_DIR: "$HOME/tireSalesAgent"
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -36,6 +32,10 @@ jobs:
         ssh -o StrictHostKeyChecking=no -i ~/.ssh/server_key -p 43422 \
           ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} '
           set -e
+
+          REPO_URL="https://github.com/cheloim/tireSalesAgent.git"
+          REPO_BRANCH="main"
+          REPO_DIR="$HOME/tireSalesAgent"
 
           echo "=== Clonar / Pull repo ==="
           if [ -d "$REPO_DIR/.git" ]; then
