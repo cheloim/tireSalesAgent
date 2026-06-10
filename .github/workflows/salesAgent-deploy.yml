@@ -51,6 +51,12 @@ jobs:
             cd "$REPO_DIR"
           fi
 
+          echo "=== Restaurar .env ==="
+          if [ -f /tmp/.env ]; then
+            cp /tmp/.env $REPO_DIR/.env
+            echo ".env restaurado desde /tmp/"
+          fi
+
           echo "=== Verificar .env ==="
           if [ ! -f "$REPO_DIR/.env" ]; then
             echo "ERROR: .env no encontrado en $REPO_DIR — el deploy se cancela." >&2
