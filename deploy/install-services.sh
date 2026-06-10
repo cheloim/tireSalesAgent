@@ -113,3 +113,22 @@ sudo systemctl is-active tire-agent    || { echo "tire-agent FAIL"; exit 1; }
 sudo systemctl is-active tire-agent-web || { echo "tire-agent-web FAIL"; exit 1; }
 echo "tire-agent OK"
 echo "tire-agent-web OK"
+
+echo "=== Instalar ngrok ==="
+if ! command -v ngrok &>/dev/null; then
+    echo "Descargando ngrok..."
+    curl -fsSL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz -o /tmp/ngrok.tgz
+    sudo tar -xzf /tmp/ngrok.tgz -C /usr/local/bin
+    rm /tmp/ngrok.tgz
+fi
+
+echo "Instalando servicio ngrok..."
+sudo ngrok service install --config ~/.config/ngrok/ngrok.yml
+sudo systemctl restart ngrok
+
+echo "=== Logs ngrok ==="
+journalctl -u ngrok --no-pager -n 10 || true
+
+echo "=== Estado ngrok ==="
+sudo systemctl is-active ngrok || { echo "ngrok FAIL"; exit 1; }
+echo "ngrok OK"
