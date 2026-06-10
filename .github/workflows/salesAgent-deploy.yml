@@ -107,7 +107,7 @@ jobs:
 
           echo "=== Configurar ngrok ==="
           mkdir -p ~/.config/ngrok
-          cat > ~/.config/ngrok/ngrok.yml <<NGROKEOF
+          cat > ~/.config/ngrok/ngrok.yml <<-'NGROKEOF'
 version: 3
 agent:
     authtoken: $NGROK_ENDPOINT_AUTHTOKEN
