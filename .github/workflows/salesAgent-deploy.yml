@@ -18,6 +18,10 @@ jobs:
         chmod 600 ~/.ssh/server_key
         ssh-keyscan -H -p 43422 ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
+    - name: Prepare .env file
+      run: |
+        echo "${{ secrets.SERVER_ENV_FILE }}" > /tmp/.env
+
     - name: Transfer deployment files
       run: |
         scp -o StrictHostKeyChecking=no -i ~/.ssh/server_key -P 43422 \
@@ -25,7 +29,8 @@ jobs:
           ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/
 
         scp -o StrictHostKeyChecking=no -i ~/.ssh/server_key -P 43422 \
-          .env ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/.env 2>/dev/null || true
+          /tmp/.env \
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/.env
 
     - name: Deploy application
       run: |
