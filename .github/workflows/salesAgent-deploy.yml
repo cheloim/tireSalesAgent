@@ -101,6 +101,8 @@ jobs:
             [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
             nvm install 22 && nvm alias default 22
           fi
+          echo "NODE_BIN=$(which node)" > /tmp/node_path.txt
+          echo "Node path: $(cat /tmp/node_path.txt)"
           cd "$REPO_DIR" && npm install --omit=dev --silent
 
           echo "=== Ejecutar install-services.sh ==="

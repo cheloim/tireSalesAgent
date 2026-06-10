@@ -45,6 +45,8 @@ esac
 
 echo "=== Generar servicios systemd ==="
 APP_USER=$(whoami)
+NODE_BIN=$(cat /tmp/node_path.txt 2>/dev/null | grep NODE_BIN | cut -d= -f2 || echo "/usr/bin/node")
+echo "  Node bin: $NODE_BIN"
 
 cat > /tmp/$SERVICE_NAME.service <<-EOF
 [Unit]
@@ -77,7 +79,7 @@ Requires=tire-agent.service
 Type=simple
 User=$APP_USER
 WorkingDirectory=$REPO_DIR
-ExecStart=/usr/bin/node server.js
+ExecStart=${NODE_BIN} server.js
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -100,6 +102,14 @@ echo "=== Health check ==="
 sleep 3
 curl -sf http://localhost:5000/api/estado && echo " API OK" || echo "WARN: API no responde"
 
+echo "=== Logs tire-agent ==="
+journalctl -u tire-agent --no-pager -n 10 || true
+
+echo "=== Logs tire-agent-web ==="
+journalctl -u tire-agent-web --no-pager -n 10 || true
+
 echo "=== Estado ==="
-sudo systemctl is-active tire-agent    && echo "tire-agent OK"     || echo "tire-agent FAIL"
-sudo systemctl is-active tire-agent-web && echo "tire-agent-web OK" || echo "tire-agent-web FAIL"
+sudo systemctl is-active tire-agent    || { echo "tire-agent FAIL"; exit 1; }
+sudo systemctl is-active tire-agent-web || { echo "tire-agent-web FAIL"; exit 1; }
+echo "tire-agent OK"
+echo "tire-agent-web OK"
