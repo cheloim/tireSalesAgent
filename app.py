@@ -353,7 +353,7 @@ def obtener_historial(session_id: str) -> tuple[list[dict], int]:
         if not row:
             return [], 0
         mensajes = json.loads(row[0])
-        segundos = int(time.time() - row[1]) if row[1] else 0
+        segundos = int(time.time() - float(row[1])) if row[1] else 0
         return mensajes, segundos
 
 
@@ -386,7 +386,7 @@ def guardar_historial(
         conn.execute(
             """
             INSERT INTO historiales (session_id, mensajes, actualizado, canal, debug)
-            VALUES (?, ?, datetime('now', 'localtime'), ?, ?)
+            VALUES (?, ?, strftime('%s', 'now'), ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
                 mensajes    = excluded.mensajes,
                 actualizado = excluded.actualizado,
@@ -406,7 +406,7 @@ def guardar_historial(
                     (conversation_id, session_id, agente, canal, mensajes, iniciado, actualizado,
                      modelo, temperatura, prompt_version, debug,
                      confianza, contexto, memoria, logica_negocio)
-                VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'), ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now'), ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(conversation_id) DO UPDATE SET
                     mensajes       = excluded.mensajes,
                     actualizado    = excluded.actualizado,
@@ -1158,7 +1158,7 @@ def telegram_webhook():
         logger.info(f"TG duplicado ignorado: {msg_id}")
         return "", 200
     text = (message.get("text") or message.get("caption") or "").strip()
-    logger.info(f"TG text='{text[:100]}' reply={bool(message.get('reply_to_message'))}")
+    logger.info(f"TG msg received, text length={len(text)} reply={bool(message.get('reply_to_message'))}")
 
     reply = message.get("reply_to_message")
     if reply and text:
@@ -1192,7 +1192,7 @@ def telegram_webhook():
                 chat_id, "No se escucha bien el audio. Me lo mandás de nuevo o me escribís?"
             )
             return "", 200
-        logger.info(f"Audio transcripto [{chat_id}]: {text}")
+        logger.info(f"Audio transcripto [{chat_id}], length={len(text)}")
 
     if not text or text.startswith("/"):
         return "", 200
@@ -1223,7 +1223,7 @@ def _procesar_canal(
     historial, segundos_desde_ultimo = obtener_historial(session_id)
     conversation_id = obtener_conversation_id(session_id)
     agente = obtener_o_asignar_agente(session_id)
-    logger.info(f"[{canal}] [{session_id}] agente={agente['nombre']}: {texto[:200]}")
+    logger.info(f"[{canal}] [{session_id}] agente={agente['nombre']}: msg length={len(texto)}")
 
     gap_horas = segundos_desde_ultimo / 3600 if segundos_desde_ultimo else 0
 
@@ -1514,7 +1514,7 @@ def whatsapp_webhook():
                 from_number, "No se escucha bien el audio. Me lo mandás de nuevo o me escribís?"
             )
             return "", 200
-        logger.info(f"Audio WA transcripto [{from_number}]: {text}")
+        logger.info(f"Audio WA transcripto [{from_number}], length={len(text)}")
     else:
         return "", 200
 
@@ -1556,9 +1556,7 @@ def twilio_send_message(to: str, text: str):
             data={"From": TWILIO_NUMBER, "To": to, "Body": text},
             timeout=10,
         )
-        logger.info(
-            f"Twilio send [{res.status_code}] to={to} from={TWILIO_NUMBER}: {res.text[:200]}"
-        )
+        logger.info(f"Twilio send [{res.status_code}] to={to} from={TWILIO_NUMBER}")
     except Exception as e:
         logger.error(f"Error enviando mensaje Twilio: {e}")
 
