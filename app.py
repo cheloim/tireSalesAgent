@@ -1158,7 +1158,9 @@ def telegram_webhook():
         logger.info(f"TG duplicado ignorado: {msg_id}")
         return "", 200
     text = (message.get("text") or message.get("caption") or "").strip()
-    logger.info(f"TG msg received, text length={len(text)} reply={bool(message.get('reply_to_message'))}")
+    logger.info(
+        f"TG msg received, text length={len(text)} reply={bool(message.get('reply_to_message'))}"
+    )
 
     reply = message.get("reply_to_message")
     if reply and text:
