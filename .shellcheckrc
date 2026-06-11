@@ -1,0 +1,4 @@
+source-path=.
+disable=SC1091
+enable=all
+exclude=SC2034,SC2086

@@ -1,0 +1,19 @@
+{
+  "tagname-lowercase": true,
+  "attr-lowercase": true,
+  "attr-value-dquotes": true,
+  "doctype-first": false,
+  "tag-pair": true,
+  "spec-char-escape": true,
+  "id-unique": true,
+  "src-not-empty": true,
+  "title-require": true,
+  "doctype-html5": true,
+  "style-disabled": false,
+  "inline-style-disabled": false,
+  "inline-script-disabled": false,
+  "head-script-disabled": true,
+  "ignore": [
+    "public/imagenes/**"
+  ]
+}
