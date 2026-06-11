@@ -312,12 +312,17 @@ def _worker_horario():
 threading.Thread(target=_worker_horario, daemon=True, name="worker-horario").start()
 
 
-def obtener_historial(session_id: str) -> list[dict]:
+def obtener_historial(session_id: str) -> tuple[list[dict], int]:
+    """Retorna (mensajes, segundos_desde_ultimo_mensaje)."""
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
-            "SELECT mensajes FROM historiales WHERE session_id = ?", (session_id,)
+            "SELECT mensajes, actualizado FROM historiales WHERE session_id = ?", (session_id,)
         ).fetchone()
-        return json.loads(row[0]) if row else []
+        if not row:
+            return [], 0
+        mensajes = json.loads(row[0])
+        segundos = int(time.time() - row[1]) if row[1] else 0
+        return mensajes, segundos
 
 
 def obtener_conversation_id(session_id: str) -> str:
@@ -452,7 +457,8 @@ def chat():
         return jsonify({"error": "El mensaje excede el máximo de 4000 caracteres"}), 400
 
     session_id      = obtener_session_id()
-    historial       = obtener_historial(session_id)
+    historial, segundos_desde_ultimo = obtener_historial(session_id)
+    gap_horas = segundos_desde_ultimo / 3600
     agente          = obtener_o_asignar_agente(session_id)
     conversation_id = obtener_conversation_id(session_id)
 
@@ -472,7 +478,7 @@ def chat():
         meta = {}
 
         try:
-            for chunk in procesar_mensaje(mensaje_usuario, historial, session_id, MODELO_LLM, agente, debug=_web_debug_mode, meta=meta):
+            for chunk in procesar_mensaje(mensaje_usuario, historial, session_id, MODELO_LLM, agente, debug=_web_debug_mode, meta=meta, gap_horas=gap_horas):
                 texto_completo.append(chunk)
 
             respuesta_completa = _expandir_ubicaciones_web(limpiar_respuesta("".join(texto_completo)))
@@ -766,13 +772,14 @@ def _procesar_audio_diferido(chat_id: int, file_id: str, session_id: str, modelo
         logger.error(f"Transcripción diferida fallida [{chat_id}]")
         return
 
-    historial       = obtener_historial(session_id)
+    historial, segundos_desde_ultimo = obtener_historial(session_id)
     conversation_id = obtener_conversation_id(session_id)
     agente          = obtener_o_asignar_agente(session_id)
     tg_send_typing(chat_id)
     meta_audio = {}
+    gap_horas_audio = segundos_desde_ultimo / 3600 if segundos_desde_ultimo else 0
     try:
-        chunks    = list(procesar_mensaje(text, historial, session_id, modelo, agente, meta=meta_audio))
+        chunks    = list(procesar_mensaje(text, historial, session_id, modelo, agente, meta=meta_audio, gap_horas=gap_horas_audio))
         respuesta = "".join(chunks).strip()
     except Exception as e:
         logger.error(f"Error procesando audio diferido: {e}")
@@ -997,7 +1004,7 @@ def telegram_webhook():
     if reply and text:
         reply_text = (reply.get("text") or reply.get("caption") or "").strip()[:300]
         if reply_text:
-            historial_actual = obtener_historial(str(chat_id))
+            historial_actual, _ = obtener_historial(str(chat_id))
             ya_en_contexto = any(reply_text[:100] in m.get("content", "") for m in historial_actual[-10:])
             if not ya_en_contexto:
                 text = f"{text} [contexto del mensaje al que respondés: {reply_text}]"
@@ -1042,10 +1049,12 @@ def _procesar_canal(
     send_location_fn=None,
     send_typing_fn=None,
 ):
-    historial       = obtener_historial(session_id)
+    historial, segundos_desde_ultimo = obtener_historial(session_id)
     conversation_id = obtener_conversation_id(session_id)
     agente          = obtener_o_asignar_agente(session_id)
     logger.info(f"[{canal}] [{session_id}] agente={agente['nombre']}: {texto[:200]}")
+
+    gap_horas = segundos_desde_ultimo / 3600 if segundos_desde_ultimo else 0
 
     if send_typing_fn:
         send_typing_fn()
@@ -1054,7 +1063,7 @@ def _procesar_canal(
     meta = {}
     for intento in range(4):
         try:
-            chunks    = list(procesar_mensaje(texto, historial, session_id, MODELO_LLM, agente, meta=meta))
+            chunks    = list(procesar_mensaje(texto, historial, session_id, MODELO_LLM, agente, meta=meta, gap_horas=gap_horas))
             respuesta = limpiar_respuesta("".join(chunks))
             break
         except Exception as e:

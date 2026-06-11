@@ -15,6 +15,7 @@ from google.genai import types
 import google.genai.errors as genai_errors
 
 from tools import FUNCIONES_HERRAMIENTAS
+from constants import GAP_SALUDO_HORAS
 
 load_dotenv()
 
@@ -91,6 +92,8 @@ FLUJO: buscar → mostrar opciones → presupuesto cuando elige → confirmar_ve
 POST-VENTA: Cuando confirmar_venta devuelve confirmado=true, la venta está cerrada. No vuelvas a consultar stock de ese neumático. Cerrá con un mensaje breve y natural.
 
 SITUACIONES ESPECIALES:
+- Si pasaron más de 4 horas desde el último mensaje del cliente: saludá de forma natural y casual, como si fuera un vendedor que conoce al cliente. Algo como "¿Seguis necesitando esos neumaticos?" o "¿Todo bien con eso?" es mejor que retomar el tema técnico de golpe.
+- Si pasaron días: un "¿Cómo andás?" cálido es mejor que retomar la consulta anterior. No asumir que el cliente quiere comprar — puede haber cambiado de opinión.
 - Mensaje sin sentido: decís que no entendiste, preguntás en qué ayudás. Variá la frase. Nunca menciones audio ni envío, nunca cites el mensaje recibido, nunca uses "acá estoy".
 - Queja o problema: no ofrezcas productos, preguntá qué pasó primero. Nunca pidas factura/comprobante.
 - Cuando el cliente hace preguntas personales (sobre vos, tu vida, opiniones, etc.): la primera vez respondé de forma esquiva pero natural — algo breve que cierre el tema sin incomodar. Si insiste con más preguntas personales (dos o más seguidas sin mencionar neumáticos ni otra consulta del negocio), podés ignorar completamente ese mensaje sin responderlo. En cuanto vuelva a preguntar algo del negocio, retomá normal.
@@ -269,11 +272,18 @@ def _resumir_mensajes(mensajes: list[dict]) -> str:
         f"{'Cliente' if m['role'] == 'user' else 'Agente'}: {m['content'][:500]}"
         for m in mensajes
     )
+    ultimo_cliente = ""
+    for m in reversed(mensajes):
+        if m.get("role") == "user":
+            ultimo_cliente = m.get("content", "")[:200]
+            break
+
+    extra = f"\nÚltimo mensaje del cliente: '{ultimo_cliente}'" if ultimo_cliente else ""
     prompt = (
         "Resumí esta conversación de ventas de neumáticos en un párrafo compacto. "
         "Incluí: qué consultó el cliente, qué productos y precios se mencionaron, "
         "el estado de la venta y cualquier dato del cliente (vehículo, preferencias, objeciones). "
-        "Máximo 150 palabras. Sin viñetas, en español rioplatense.\n\n"
+        f"Máximo 150 palabras. Sin viñetas, en español rioplatense.{extra}\n\n"
         + texto
     )
     try:
@@ -328,6 +338,7 @@ def procesar_mensaje(
     agente: dict | None = None,
     debug: bool = False,
     meta: dict | None = None,
+    gap_horas: float = 0,
 ) -> Generator[str, None, None]:
 
     if meta is not None:
@@ -339,7 +350,12 @@ def procesar_mensaje(
         })
 
     hora_actual = datetime.now().strftime("%H:%M")
-    prompt_con_hora = get_prompt_sistema(agente, debug=debug) + f"\n\nHora actual del servidor: {hora_actual}"
+    prompt_base = get_prompt_sistema(agente, debug=debug) + f"\n\nHora actual del servidor: {hora_actual}"
+
+    if gap_horas > GAP_SALUDO_HORAS:
+        prompt_base += f"\n\n[REANUDAR CONVERSACION] El cliente vuelve después de {int(gap_horas)} horas. Saludalo de forma natural y casual. No retomar temas técnicos de golpe."
+
+    prompt_con_hora = prompt_base
 
     contenidos = _historial_a_gemini(historial, session_id)
     contenidos.append({"role": "user", "parts": [{"text": mensaje_usuario}]})

@@ -18,6 +18,9 @@ MIN_TURNOS_VIEJOS = 4
 SUMMARY_THRESHOLD_CHARS = 200
 SUMMARY_CACHE_MAX = 200
 
+# ── Contexto de retoma ────────────────────────────────────────
+GAP_SALUDO_HORAS = 4  # horas a partir de las cuales se saluda de nuevo al retomar conversación
+
 # ── Deduplicación ────────────────────────────────────────────
 DEDUP_TTL = 300  # segundos
 WA_PENDIENTE_TTL = 3600  # segundos
