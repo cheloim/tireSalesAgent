@@ -56,7 +56,7 @@ def buscar_neumaticos(
     resultados = NEUMATICOS[:]
 
     if medida:
-        resultados = [n for n in resultados if medida.upper() in n["medida"].upper()]  # type: ignore[union-attr]
+        resultados = [n for n in resultados if medida.upper() in n["medida"].upper()]  # type: ignore[union-attr,attr-defined]
     if marca:
         resultados = [n for n in resultados if _coincide(marca, n["marca"])]  # type: ignore[arg-type]
     if tipo:

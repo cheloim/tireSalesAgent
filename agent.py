@@ -215,7 +215,7 @@ def ejecutar_herramienta(nombre: str, argumentos: dict, session_id: str) -> str:
         params = inspect.signature(cast(Callable[..., Any], funcion)).parameters
         args_filtrados = {k: v for k, v in argumentos.items() if k in params}
         args_filtrados["session_id"] = session_id
-        return funcion(**args_filtrados)
+        return cast(Callable[..., Any], funcion)(**args_filtrados)
     except Exception as e:
         logger.error(f"Error ejecutando herramienta {nombre}: {e}")
         return json.dumps(
