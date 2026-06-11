@@ -56,18 +56,18 @@ def buscar_neumaticos(
     resultados = NEUMATICOS[:]
 
     if medida:
-        resultados = [n for n in resultados if medida.upper() in n["medida"].upper()]
+        resultados = [n for n in resultados if medida.upper() in n["medida"].upper()]  # type: ignore[union-attr]
     if marca:
-        resultados = [n for n in resultados if _coincide(marca, n["marca"])]
+        resultados = [n for n in resultados if _coincide(marca, n["marca"])]  # type: ignore[arg-type]
     if tipo:
-        resultados = [n for n in resultados if _coincide(tipo, n["tipo"])]
+        resultados = [n for n in resultados if _coincide(tipo, n["tipo"])]  # type: ignore[arg-type]
     if temporada:
         # Coincidencia flexible: "verano"/"summer" → "todo el año" si no hay match exacto
-        strict = [n for n in resultados if _coincide(temporada, n["temporada"])]
+        strict = [n for n in resultados if _coincide(temporada, n["temporada"])]  # type: ignore[arg-type]
         resultados = strict if strict else resultados  # si no coincide, ignorar filtro
     if precio_maximo is not None:
         with contextlib.suppress(TypeError, ValueError):
-            resultados = [n for n in resultados if n["precio"] <= float(precio_maximo)]
+            resultados = [n for n in resultados if n["precio"] <= float(precio_maximo)]  # type: ignore[operator]
 
     if not resultados:
         detalle = []
@@ -161,7 +161,7 @@ def obtener_recomendaciones(
             candidatos = [n for n in candidatos if n["medida"] in medidas]
 
     if presupuesto_por_neumatico is not None:
-        candidatos = [n for n in candidatos if n["precio"] <= presupuesto_por_neumatico]
+        candidatos = [n for n in candidatos if n["precio"] <= presupuesto_por_neumatico]  # type: ignore[operator]
 
     def puntaje(neumatico):
         p = 0
@@ -192,8 +192,8 @@ def obtener_recomendaciones(
     vistos: set[str] = set()
     unicos = []
     for n in candidatos:
-        if n["medida"] not in vistos:
-            vistos.add(n["medida"])
+        if n["medida"] not in vistos:  # type: ignore[operator]
+            vistos.add(n["medida"])  # type: ignore[arg-type]
             unicos.append(n)
 
     top = unicos[:3]
@@ -254,7 +254,7 @@ def generar_presupuesto(
     neumatico = next((n for n in NEUMATICOS if n["id"] == neumatico_id), None)
     if not neumatico:
         return _error_neumatico_no_encontrado(neumatico_id)
-    if neumatico["stock"] < cantidad:
+    if neumatico["stock"] < cantidad:  # type: ignore[operator]
         return json.dumps(
             {
                 "error": f"Solo hay {neumatico['stock']} unidades en stock.",
@@ -263,7 +263,7 @@ def generar_presupuesto(
             ensure_ascii=False,
         )
 
-    subtotal_neumaticos = neumatico["precio"] * cantidad
+    subtotal_neumaticos = neumatico["precio"] * cantidad  # type: ignore[operator]
     subtotal_instalacion = 0.0
     desglose_instalacion = None
 
@@ -360,7 +360,7 @@ def confirmar_venta(
     except Exception as e:
         logging.getLogger(__name__).error(f"Error enviando notificación de venta: {e}")
 
-    total = neumatico["precio"] * cantidad
+    total = neumatico["precio"] * cantidad  # type: ignore[operator]
     return json.dumps(
         {
             "confirmado": True,

@@ -893,7 +893,7 @@ def _procesar_audio_diferido(chat_id: int, file_id: str, session_id: str, modelo
     conversation_id = obtener_conversation_id(session_id)
     agente = obtener_o_asignar_agente(session_id)
     tg_send_typing(chat_id)
-    meta_audio = {}
+    meta_audio: dict = {}
     gap_horas_audio = segundos_desde_ultimo / 3600 if segundos_desde_ultimo else 0
     try:
         chunks = list(
@@ -1231,7 +1231,7 @@ def _procesar_canal(
         send_typing_fn()
 
     respuesta = ""
-    meta = {}
+    meta: dict = {}
     for intento in range(4):
         try:
             chunks = list(

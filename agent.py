@@ -6,8 +6,9 @@ import logging
 import os
 import re
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from datetime import datetime
+from typing import Any, cast
 
 import google.genai.errors as genai_errors
 from dotenv import load_dotenv
@@ -211,7 +212,7 @@ def ejecutar_herramienta(nombre: str, argumentos: dict, session_id: str) -> str:
     if not funcion:
         return json.dumps({"error": f"Herramienta '{nombre}' no encontrada."}, ensure_ascii=False)
     try:
-        params = inspect.signature(funcion).parameters
+        params = inspect.signature(cast(Callable[..., Any], funcion)).parameters
         args_filtrados = {k: v for k, v in argumentos.items() if k in params}
         args_filtrados["session_id"] = session_id
         return funcion(**args_filtrados)
