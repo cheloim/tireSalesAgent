@@ -23,4 +23,4 @@ known-first-party = ["agent", "tools", "inventory"]
 
 [format]
 quote-style = "double"
-indent-style = "spaces"
+indent-style = "space"

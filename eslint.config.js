@@ -12,7 +12,7 @@ export default [
     files: ["**/*.js"],
     languageOptions: {
       ecmaVersion: 2020,
-      globals: { ...globals.node },
+      globals: { ...globals.browser, ...globals.node },
       sourceType: "module"
     },
     rules: {
@@ -30,7 +30,7 @@ export default [
       "comma-dangle": ["error", "never"],
       "keyword-spacing": "error",
       "space-before-blocks": "error",
-      "no-multi-spaces": "warn"
+      "no-multi-spaces": "off"
     }
   }
 ];

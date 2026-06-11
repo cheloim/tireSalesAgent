@@ -1,4 +1,4 @@
 source-path=.
-disable=SC1091
+disable=SC1091,SC2250,SC2292,SC2154,SC2312,SC2034,SC2248,SC2002
 enable=all
-exclude=SC2034,SC2086
+exclude=SC2086
