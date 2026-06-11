@@ -17,6 +17,22 @@ def _palabras(texto: str) -> set:
     return set(texto.lower().split())
 
 
+def _encontrar_vehiculo(clave: str):
+    """Busca vehículo por clave exacta o fuzzy match. Devuelve (clave_encontrada, medidas) o (None, None)."""
+    clave = clave.lower().strip()
+    medidas = COMPATIBILIDAD_VEHICULOS.get(clave)
+    if medidas is not None:
+        return clave, medidas
+    for v, medidas in COMPATIBILIDAD_VEHICULOS.items():
+        if clave in v or v in clave:
+            return v, medidas
+    return None, None
+
+
+def _error_neumatico_no_encontrado(neumatico_id: str) -> str:
+    return json.dumps({"error": f"No se encontró el neumático con ID '{neumatico_id}'."}, ensure_ascii=False)
+
+
 def _coincide(termino: str, campo: str) -> bool:
     """True si alguna palabra del término aparece en el campo (o viceversa)."""
     palabras_termino = _palabras(termino)
@@ -85,20 +101,12 @@ def buscar_neumaticos(
 def ver_detalle_neumatico(neumatico_id: str, session_id: str = "default") -> str:
     neumatico = next((n for n in NEUMATICOS if n["id"] == neumatico_id), None)
     if not neumatico:
-        return json.dumps({"error": f"No se encontró el neumático con ID '{neumatico_id}'."}, ensure_ascii=False)
+        return _error_neumatico_no_encontrado(neumatico_id)
     return json.dumps(neumatico, ensure_ascii=False)
 
 
 def verificar_compatibilidad(vehiculo: str, medida: str, session_id: str = "default") -> str:
-    clave = vehiculo.lower().strip()
-    medidas_compatibles = COMPATIBILIDAD_VEHICULOS.get(clave)
-
-    if medidas_compatibles is None:
-        for v, medidas in COMPATIBILIDAD_VEHICULOS.items():
-            if clave in v or v in clave:
-                medidas_compatibles = medidas
-                clave = v
-                break
+    clave_encontrada, medidas_compatibles = _encontrar_vehiculo(vehiculo)
 
     if medidas_compatibles is None:
         vehiculos_disponibles = ", ".join(COMPATIBILIDAD_VEHICULOS.keys())
@@ -109,12 +117,12 @@ def verificar_compatibilidad(vehiculo: str, medida: str, session_id: str = "defa
 
     es_compatible = medida.upper() in [m.upper() for m in medidas_compatibles]
     return json.dumps({
-        "vehiculo": clave,
+        "vehiculo": clave_encontrada,
         "medida_consultada": medida,
         "compatible": es_compatible,
         "medidas_compatibles": medidas_compatibles,
         "mensaje": (
-            f"La medida {medida} {'ES compatible' if es_compatible else 'NO es compatible'} con el {clave}. "
+            f"La medida {medida} {'ES compatible' if es_compatible else 'NO es compatible'} con el {clave_encontrada}. "
             f"Medidas compatibles: {', '.join(medidas_compatibles)}"
         ),
     }, ensure_ascii=False)
@@ -134,11 +142,9 @@ def obtener_recomendaciones(
     candidatos = NEUMATICOS[:]
 
     if vehiculo:
-        clave = vehiculo.lower().strip()
-        for v, medidas in COMPATIBILIDAD_VEHICULOS.items():
-            if clave in v or v in clave:
-                candidatos = [n for n in candidatos if n["medida"] in medidas]
-                break
+        _, medidas = _encontrar_vehiculo(vehiculo)
+        if medidas:
+            candidatos = [n for n in candidatos if n["medida"] in medidas]
 
     if presupuesto_por_neumatico is not None:
         candidatos = [n for n in candidatos if n["precio"] <= presupuesto_por_neumatico]
@@ -227,7 +233,7 @@ def generar_presupuesto(
 ) -> str:
     neumatico = next((n for n in NEUMATICOS if n["id"] == neumatico_id), None)
     if not neumatico:
-        return json.dumps({"error": f"No se encontró el neumático con ID '{neumatico_id}'."}, ensure_ascii=False)
+        return _error_neumatico_no_encontrado(neumatico_id)
     if neumatico["stock"] < cantidad:
         return json.dumps({
             "error": f"Solo hay {neumatico['stock']} unidades en stock.",
@@ -297,8 +303,8 @@ def confirmar_venta(
     for k in expiradas:
         del _ventas_confirmadas[k]
     clave_dedup = f"{session_id}_{neumatico_id}_{cantidad}"
-    ultimo = _ventas_confirmadas.get(clave_dedup, 0)
-    if ahora - ultimo < _VENTA_DEDUP_TTL:
+    ultimo = _ventas_confirmadas.get(clave_dedup)
+    if ultimo and ahora - ultimo < _VENTA_DEDUP_TTL:
         return json.dumps({"confirmado": True, "duplicado": True, "mensaje": "Esta venta ya fue confirmada."}, ensure_ascii=False)
     _ventas_confirmadas[clave_dedup] = ahora
 

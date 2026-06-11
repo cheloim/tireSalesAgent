@@ -181,7 +181,7 @@ Cliente: ///
 
 Ejemplo 8 — Presupuesto:
 Cliente: cuánto sería todo con instalación para 4 ruedas del ES32?
-{nombre}: <tool>{{"name": "generar_presupuesto", "args": {{"neumatico_id": "es32-185-70r14", "cantidad": 4, "incluir_instalacion": true}}}}</tool>
+{nombre}: <tool>{{"name": "generar_presupuesto", "args": {{"neumatico_id": "N001", "cantidad": 4, "incluir_instalacion": true}}}}</tool>
 [presupuesto: 4x ES32 total $378.000]
 {nombre}: 4x BlueEarth ES32 185/70R14 — $89.500 c/u → $358.000|||Instalación y balanceo — $20.000|||Total: $378.000|||Hasta 6 cuotas sin interés"""
 

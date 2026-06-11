@@ -44,7 +44,8 @@ class _MemHandler(logging.Handler):
                 })
                 _log_counter += 1
         except Exception:
-            pass
+            import sys
+            sys.stderr.write(f"_MemHandler.emit error: {record}\n")
 
 
 _mem_handler = _MemHandler()
@@ -447,6 +448,8 @@ def chat():
     mensaje_usuario = datos["mensaje"].strip()
     if not mensaje_usuario:
         return jsonify({"error": "El mensaje no puede estar vacío"}), 400
+    if len(mensaje_usuario) > 4000:
+        return jsonify({"error": "El mensaje excede el máximo de 4000 caracteres"}), 400
 
     session_id      = obtener_session_id()
     historial       = obtener_historial(session_id)
@@ -707,12 +710,20 @@ def _buffer_message(session_id: str, text: str, flush_fn):
 
         def _flush():
             with _buf_lock:
-                msgs = _msg_buffers.pop(session_id, {}).get("messages", [])
+                buf = _msg_buffers.pop(session_id, None)
+                if not buf:
+                    return
+                msgs = buf.get("messages", [])
+                timer = buf.get("timer")
+                if timer:
+                    timer.cancel()
             if msgs:
                 try:
                     flush_fn("\n".join(msgs))
                 except Exception as e:
                     logger.error(f"Error en flush de buffer [{session_id}]: {e}", exc_info=True)
+                    with _buf_lock:
+                        _msg_buffers.setdefault(session_id, {"messages": [], "timer": None})["messages"].extend(msgs)
 
         timer = threading.Timer(MSG_BUFFER_DELAY, _flush)
         buf["timer"] = timer
@@ -802,15 +813,32 @@ _HTML_TAG_RE  = re.compile(r"</?(?!tool|imagen|ubicacion)\w+[^>]*>", re.IGNORECA
 
 _mensajes_procesados: dict[str, float] = {}
 _DEDUP_TTL = 300  # segundos
+_dedup_lock = threading.Lock()
 
 
 def _ya_procesado(msg_id: str) -> bool:
     ahora = time.time()
-    _mensajes_procesados.update({k: v for k, v in _mensajes_procesados.items() if ahora - v < _DEDUP_TTL})
-    if msg_id in _mensajes_procesados:
-        return True
-    _mensajes_procesados[msg_id] = ahora
-    return False
+    with _dedup_lock:
+        _mensajes_procesados.update({k: v for k, v in _mensajes_procesados.items() if ahora - v < _DEDUP_TTL})
+        if msg_id in _mensajes_procesados:
+            return True
+        _mensajes_procesados[msg_id] = ahora
+        return False
+
+
+def _limpiar_dedup_loop():
+    while True:
+        time.sleep(_DEDUP_TTL / 2)
+        ahora = time.time()
+        with _dedup_lock:
+            expired = [k for k, v in _mensajes_procesados.items() if ahora - v >= _DEDUP_TTL]
+            for k in expired:
+                del _mensajes_procesados[k]
+
+
+_dedup_lock = threading.Lock()
+_dedup_thread = threading.Thread(target=_limpiar_dedup_loop, daemon=True)
+_dedup_thread.start()
 
 
 def limpiar_respuesta(text: str) -> str:
