@@ -1,4 +1,4 @@
-# Tire Sales Agent — CLAUDE.md
+# Tire Sales Agent — CONTEXT.md
 
 ## Stack
 - **Backend**: Python 3 + Flask (port 5000) — `app.py`
@@ -50,10 +50,13 @@ WA_NOTIFY_NUMBER
 ## Agentes (personas)
 Rodrigo, Matías, Valentina, Camila — asignados por sesión, modo debug disponible
 
-## Deployment actual
-- ngrok expone Flask local con HTTPS para webhooks
-- Gunicorn via `./start.sh` para producción-like local
-- Plan futuro: EC2 t3.micro + Nginx + Certbot + systemd
+## Deployment
+- **Pipeline**: GitHub Actions → SSH a Linode (custom port 43422)
+- **Servicios**: tire-agent (Flask/Gunicorn), tire-agent-web (Node/Express), ngrok
+- **Secrets**: SERVER_SSH_KEY, SERVER_HOST, SERVER_USER, SERVER_ENV_FILE, NGROK_ENDPOINT_AUTHTOKEN
+- **Install scripts**: `deploy/install-services.sh` (systemd), `deploy/configure-ngrok.sh` (ngrok config)
+- **ngrok**: tunneling HTTP :5000 para webhooks externos
+- **Evaluando**: migración a arquitectura de microservicios
 
 ## Convenciones
 - Español rioplatense en toda la UI y lógica de negocio

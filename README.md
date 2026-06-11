@@ -14,7 +14,7 @@ Node.js / Express  :8080   ← sirve /public (dashboard + chat web)
 Flask / Python     :5000   ← lógica del agente, webhooks, SSE
         │
         ├── Google Gemini (LLM)
-        ├── SQLite  (neumáticos.db)
+        ├── SQLite  (conversaciones.db)
         └── Notificaciones internas (Telegram / WhatsApp)
 ```
 
@@ -121,7 +121,7 @@ Cada agente puede operar en modo debug para pruebas.
 
 ## Base de datos
 
-Tablas SQLite (`neumáticos.db`):
+Tablas SQLite (`conversaciones.db`):
 - `historiales` — historial de conversaciones
 - `ventas` — registro de ventas confirmadas
 - `conversations` — sesiones de chat
