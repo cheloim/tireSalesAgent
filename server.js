@@ -21,7 +21,7 @@ app.use(
       proxyRes(proxyRes) {
         proxyRes.headers['x-accel-buffering'] = 'no';
       }
-    },
+    }
   })
 );
 

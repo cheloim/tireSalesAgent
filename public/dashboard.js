@@ -319,7 +319,7 @@ async function init() {
   conectarStream();
   cargarVentas();
   cargarLogs();
-  setInterval(cargarLogs, 30_000);
+  setInterval(cargarLogs, 30000);
 }
 
 init();

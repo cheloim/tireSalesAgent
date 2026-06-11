@@ -6,24 +6,24 @@ import logging
 import os
 import re
 import time
+from collections.abc import Generator
 from datetime import datetime
-from typing import Generator
 
+import google.genai.errors as genai_errors
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-import google.genai.errors as genai_errors
 
-from tools import FUNCIONES_HERRAMIENTAS
 from constants import GAP_SALUDO_HORAS
+from tools import FUNCIONES_HERRAMIENTAS
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-MODELO_DEFAULT  = "gemini-flash-latest"
-TEMPERATURA     = 0.5
-PROMPT_VERSION  = "v1"
+MODELO_DEFAULT = "gemini-flash-latest"
+TEMPERATURA = 0.5
+PROMPT_VERSION = "v1"
 
 _client: genai.Client | None = None
 
@@ -190,11 +190,12 @@ Cliente: cuánto sería todo con instalación para 4 ruedas del ES32?
 
 
 AGENTES = [
-    {"nombre": "Rodrigo",   "genero": "M"},
-    {"nombre": "Matías",    "genero": "M"},
+    {"nombre": "Rodrigo", "genero": "M"},
+    {"nombre": "Matías", "genero": "M"},
     {"nombre": "Valentina", "genero": "F"},
-    {"nombre": "Camila",    "genero": "F"},
+    {"nombre": "Camila", "genero": "F"},
 ]
+
 
 def get_prompt_sistema(agente: dict | None = None, debug: bool = False) -> str:
     if debug:
@@ -205,6 +206,7 @@ def get_prompt_sistema(agente: dict | None = None, debug: bool = False) -> str:
 
 def ejecutar_herramienta(nombre: str, argumentos: dict, session_id: str) -> str:
     import inspect
+
     funcion = FUNCIONES_HERRAMIENTAS.get(nombre)
     if not funcion:
         return json.dumps({"error": f"Herramienta '{nombre}' no encontrada."}, ensure_ascii=False)
@@ -215,10 +217,12 @@ def ejecutar_herramienta(nombre: str, argumentos: dict, session_id: str) -> str:
         return funcion(**args_filtrados)
     except Exception as e:
         logger.error(f"Error ejecutando herramienta {nombre}: {e}")
-        return json.dumps({"error": f"Error al ejecutar la herramienta: {str(e)}"}, ensure_ascii=False)
+        return json.dumps(
+            {"error": f"Error al ejecutar la herramienta: {str(e)}"}, ensure_ascii=False
+        )
 
 
-_TOOL_RE    = re.compile(r"<tool(?:_code)?>(.*?)</tool(?:_code)?>", re.DOTALL)
+_TOOL_RE = re.compile(r"<tool(?:_code)?>(.*?)</tool(?:_code)?>", re.DOTALL)
 _THOUGHT_RE = re.compile(r"<thought>.*?</thought>", re.DOTALL | re.IGNORECASE)
 
 
@@ -238,6 +242,7 @@ _RESULTADO_TOOL_RE = re.compile(r"Resultado de \w+: (\{.*\}|\[.*\])", re.DOTALL)
 
 def _comprimir_resultado_tool(texto: str) -> str:
     """Reemplaza JSONs grandes de resultados de herramientas por un resumen compacto."""
+
     def resumir(m):
         try:
             data = json.loads(m.group(1))
@@ -256,21 +261,23 @@ def _comprimir_resultado_tool(texto: str) -> str:
             pass
         raw = m.group(0)
         return raw[:120] + "…" if len(raw) > 120 else raw
+
     return _RESULTADO_TOOL_RE.sub(resumir, texto)
 
 
-_TURNOS_VERBATIM = 8        # últimos N turnos se mandan completos
-_MIN_TURNOS_VIEJOS   = 4   # mínimo de turnos viejos para activar sumarización
+_TURNOS_VERBATIM = 8  # últimos N turnos se mandan completos
+_MIN_TURNOS_VIEJOS = 4  # mínimo de turnos viejos para activar sumarización
 
-_summary_cache: collections.OrderedDict = collections.OrderedDict()  # "session_id:corte" -> texto resumen
+_summary_cache: collections.OrderedDict = (
+    collections.OrderedDict()
+)  # "session_id:corte" -> texto resumen
 _SUMMARY_CACHE_MAX = 200
 
 
 def _resumir_mensajes(mensajes: list[dict]) -> str:
     """Llama a Gemini para resumir la porción vieja del historial en un párrafo."""
     texto = "\n".join(
-        f"{'Cliente' if m['role'] == 'user' else 'Agente'}: {m['content'][:500]}"
-        for m in mensajes
+        f"{'Cliente' if m['role'] == 'user' else 'Agente'}: {m['content'][:500]}" for m in mensajes
     )
     ultimo_cliente = ""
     for m in reversed(mensajes):
@@ -283,8 +290,7 @@ def _resumir_mensajes(mensajes: list[dict]) -> str:
         "Resumí esta conversación de ventas de neumáticos en un párrafo compacto. "
         "Incluí: qué consultó el cliente, qué productos y precios se mencionaron, "
         "el estado de la venta y cualquier dato del cliente (vehículo, preferencias, objeciones). "
-        f"Máximo 150 palabras. Sin viñetas, en español rioplatense.{extra}\n\n"
-        + texto
+        f"Máximo 150 palabras. Sin viñetas, en español rioplatense.{extra}\n\n" + texto
     )
     try:
         resp = get_client().models.generate_content(
@@ -314,7 +320,12 @@ def _historial_a_gemini(historial: list[dict], session_id: str = "") -> list[dic
             if len(_summary_cache) > _SUMMARY_CACHE_MAX:
                 _summary_cache.popitem(last=False)
         resumen = _summary_cache[cache_key]
-        contenidos.append({"role": "user",  "parts": [{"text": f"[Resumen de la conversación anterior]\n{resumen}"}]})
+        contenidos.append(
+            {
+                "role": "user",
+                "parts": [{"text": f"[Resumen de la conversación anterior]\n{resumen}"}],
+            }
+        )
         contenidos.append({"role": "model", "parts": [{"text": "Entendido, tengo el contexto."}]})
         for msg in historial[corte:]:
             role = "model" if msg["role"] == "assistant" else "user"
@@ -342,15 +353,19 @@ def procesar_mensaje(
 ) -> Generator[str, None, None]:
 
     if meta is not None:
-        meta.update({
-            "memoria":        len(historial),
-            "contexto":       0,
-            "confianza":      None,
-            "logica_negocio": [],
-        })
+        meta.update(
+            {
+                "memoria": len(historial),
+                "contexto": 0,
+                "confianza": None,
+                "logica_negocio": [],
+            }
+        )
 
     hora_actual = datetime.now().strftime("%H:%M")
-    prompt_base = get_prompt_sistema(agente, debug=debug) + f"\n\nHora actual del servidor: {hora_actual}"
+    prompt_base = (
+        get_prompt_sistema(agente, debug=debug) + f"\n\nHora actual del servidor: {hora_actual}"
+    )
 
     if gap_horas > GAP_SALUDO_HORAS:
         prompt_base += f"\n\n[REANUDAR CONVERSACION] El cliente vuelve después de {int(gap_horas)} horas. Saludalo de forma natural y casual. No retomar temas técnicos de golpe."
@@ -364,12 +379,11 @@ def procesar_mensaje(
         genai_errors.ServerError,
         genai_errors.APIError,
     )
-    MAX_ITERACIONES  = 8
-    MAX_RETRIES      = 10
-    BACKOFF_BASE     = 2
+    MAX_ITERACIONES = 8
+    MAX_RETRIES = 10
+    BACKOFF_BASE = 2
 
     for _ in range(MAX_ITERACIONES):
-
         # ── Llamada a Gemini con reintentos ───────────────────────
         stream = None
         for intento in range(MAX_RETRIES):
@@ -385,8 +399,10 @@ def procesar_mensaje(
                 )
                 break
             except RETRIABLE as e:
-                espera = BACKOFF_BASE ** intento
-                logger.warning(f"Gemini no disponible (intento {intento+1}): {e}. Reintentando en {espera}s…")
+                espera = BACKOFF_BASE**intento
+                logger.warning(
+                    f"Gemini no disponible (intento {intento + 1}): {e}. Reintentando en {espera}s…"
+                )
                 time.sleep(espera)
             except Exception as e:
                 logger.error(f"Error fatal de Gemini: {e}")
@@ -476,7 +492,9 @@ def procesar_mensaje(
                 contenidos.append({"role": "model", "parts": [{"text": buffer}]})
                 resultado = ejecutar_herramienta(nombre, argumentos, session_id)
                 logger.info(f"Resultado: {resultado[:200]}")
-                contenidos.append({"role": "user", "parts": [{"text": f"Resultado de {nombre}: {resultado}"}]})
+                contenidos.append(
+                    {"role": "user", "parts": [{"text": f"Resultado de {nombre}: {resultado}"}]}
+                )
                 continue
             else:
                 if not enviado_al_usuario and buffer.strip():
@@ -490,15 +508,25 @@ def procesar_mensaje(
 
 def transcribir_audio(audio_bytes: bytes, modelo: str = MODELO_DEFAULT) -> str | None:
     import base64
+
     try:
         response = get_client().models.generate_content(
             model=modelo,
-            contents=[{
-                "parts": [
-                    {"inline_data": {"mime_type": "audio/ogg", "data": base64.b64encode(audio_bytes).decode()}},
-                    {"text": "Transcribí exactamente lo que dice este audio. Solo devolvé el texto transcripto, sin explicaciones, comillas ni encabezados."},
-                ]
-            }],
+            contents=[
+                {
+                    "parts": [
+                        {
+                            "inline_data": {
+                                "mime_type": "audio/ogg",
+                                "data": base64.b64encode(audio_bytes).decode(),
+                            }
+                        },
+                        {
+                            "text": "Transcribí exactamente lo que dice este audio. Solo devolvé el texto transcripto, sin explicaciones, comillas ni encabezados."
+                        },
+                    ]
+                }
+            ],
         )
         return (response.text or "").strip() or None
     except Exception as e:

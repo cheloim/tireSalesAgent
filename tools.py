@@ -1,16 +1,19 @@
 """Implementación de herramientas para el agente de ventas de neumáticos."""
 
+import contextlib
 import json
 import logging
 import time
+
 from inventory import (
-    NEUMATICOS,
     COMPATIBILIDAD_VEHICULOS,
-    TARIFA_INSTALACION,
+    NEUMATICOS,
     TARIFA_BALANCEO,
     TARIFA_DESECHO,
+    TARIFA_INSTALACION,
     actualizar_stock,
 )
+
 
 def _palabras(texto: str) -> set:
     """Devuelve el conjunto de palabras en minúsculas de un texto."""
@@ -30,13 +33,15 @@ def _encontrar_vehiculo(clave: str):
 
 
 def _error_neumatico_no_encontrado(neumatico_id: str) -> str:
-    return json.dumps({"error": f"No se encontró el neumático con ID '{neumatico_id}'."}, ensure_ascii=False)
+    return json.dumps(
+        {"error": f"No se encontró el neumático con ID '{neumatico_id}'."}, ensure_ascii=False
+    )
 
 
 def _coincide(termino: str, campo: str) -> bool:
     """True si alguna palabra del término aparece en el campo (o viceversa)."""
     palabras_termino = _palabras(termino)
-    palabras_campo   = _palabras(campo)
+    palabras_campo = _palabras(campo)
     return bool(palabras_termino & palabras_campo)
 
 
@@ -61,10 +66,8 @@ def buscar_neumaticos(
         strict = [n for n in resultados if _coincide(temporada, n["temporada"])]
         resultados = strict if strict else resultados  # si no coincide, ignorar filtro
     if precio_maximo is not None:
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             resultados = [n for n in resultados if n["precio"] <= float(precio_maximo)]
-        except (TypeError, ValueError):
-            pass
 
     if not resultados:
         detalle = []
@@ -75,26 +78,31 @@ def buscar_neumaticos(
         if tipo:
             detalle.append(f"tipo {tipo}")
         criterio = ", ".join(detalle) if detalle else "esos criterios"
-        return json.dumps({
-            "resultados": [],
-            "sin_stock": True,
-            "criterio_buscado": criterio,
-            "mensaje": f"No hay neumáticos disponibles para {criterio}. Usá obtener_recomendaciones con el vehículo del cliente para ofrecer alternativas.",
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "resultados": [],
+                "sin_stock": True,
+                "criterio_buscado": criterio,
+                "mensaje": f"No hay neumáticos disponibles para {criterio}. Usá obtener_recomendaciones con el vehículo del cliente para ofrecer alternativas.",
+            },
+            ensure_ascii=False,
+        )
 
     salida = []
     for n in resultados:
-        salida.append({
-            "id": n["id"],
-            "marca": n["marca"],
-            "modelo": n["modelo"],
-            "medida": n["medida"],
-            "tipo": n["tipo"],
-            "temporada": n["temporada"],
-            "precio": n["precio"],
-            "stock": n["stock"],
-            "garantia_km": n["garantia_km"],
-        })
+        salida.append(
+            {
+                "id": n["id"],
+                "marca": n["marca"],
+                "modelo": n["modelo"],
+                "medida": n["medida"],
+                "tipo": n["tipo"],
+                "temporada": n["temporada"],
+                "precio": n["precio"],
+                "stock": n["stock"],
+                "garantia_km": n["garantia_km"],
+            }
+        )
     return json.dumps({"resultados": salida, "total": len(salida)}, ensure_ascii=False)
 
 
@@ -110,22 +118,28 @@ def verificar_compatibilidad(vehiculo: str, medida: str, session_id: str = "defa
 
     if medidas_compatibles is None:
         vehiculos_disponibles = ", ".join(COMPATIBILIDAD_VEHICULOS.keys())
-        return json.dumps({
-            "compatible": False,
-            "mensaje": f"Vehículo '{vehiculo}' no está en nuestra base de datos. Vehículos disponibles: {vehiculos_disponibles}",
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "compatible": False,
+                "mensaje": f"Vehículo '{vehiculo}' no está en nuestra base de datos. Vehículos disponibles: {vehiculos_disponibles}",
+            },
+            ensure_ascii=False,
+        )
 
     es_compatible = medida.upper() in [m.upper() for m in medidas_compatibles]
-    return json.dumps({
-        "vehiculo": clave_encontrada,
-        "medida_consultada": medida,
-        "compatible": es_compatible,
-        "medidas_compatibles": medidas_compatibles,
-        "mensaje": (
-            f"La medida {medida} {'ES compatible' if es_compatible else 'NO es compatible'} con el {clave_encontrada}. "
-            f"Medidas compatibles: {', '.join(medidas_compatibles)}"
-        ),
-    }, ensure_ascii=False)
+    return json.dumps(
+        {
+            "vehiculo": clave_encontrada,
+            "medida_consultada": medida,
+            "compatible": es_compatible,
+            "medidas_compatibles": medidas_compatibles,
+            "mensaje": (
+                f"La medida {medida} {'ES compatible' if es_compatible else 'NO es compatible'} con el {clave_encontrada}. "
+                f"Medidas compatibles: {', '.join(medidas_compatibles)}"
+            ),
+        },
+        ensure_ascii=False,
+    )
 
 
 def obtener_recomendaciones(
@@ -185,10 +199,13 @@ def obtener_recomendaciones(
     top = unicos[:3]
 
     if not top:
-        return json.dumps({
-            "recomendaciones": [],
-            "mensaje": "No se encontraron neumáticos que coincidan con sus criterios.",
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "recomendaciones": [],
+                "mensaje": "No se encontraron neumáticos que coincidan con sus criterios.",
+            },
+            ensure_ascii=False,
+        )
 
     def _variantes(principal: dict) -> list[dict]:
         """Otros neumáticos con la misma medida pero distinto índice de velocidad."""
@@ -204,25 +221,28 @@ def obtener_recomendaciones(
             if v["medida"] == principal["medida"] and v["id"] != principal["id"]
         ]
 
-    return json.dumps({
-        "recomendaciones": [
-            {
-                "id": n["id"],
-                "marca": n["marca"],
-                "modelo": n["modelo"],
-                "medida": n["medida"],
-                "indice_velocidad": n["indice_velocidad"],
-                "tipo": n["tipo"],
-                "temporada": n["temporada"],
-                "precio": n["precio"],
-                "garantia_km": n["garantia_km"],
-                "descripcion": n["descripcion"],
-                "caracteristicas": n["caracteristicas"],
-                "variantes_mismo_tamaño": _variantes(n),
-            }
-            for n in top
-        ]
-    }, ensure_ascii=False)
+    return json.dumps(
+        {
+            "recomendaciones": [
+                {
+                    "id": n["id"],
+                    "marca": n["marca"],
+                    "modelo": n["modelo"],
+                    "medida": n["medida"],
+                    "indice_velocidad": n["indice_velocidad"],
+                    "tipo": n["tipo"],
+                    "temporada": n["temporada"],
+                    "precio": n["precio"],
+                    "garantia_km": n["garantia_km"],
+                    "descripcion": n["descripcion"],
+                    "caracteristicas": n["caracteristicas"],
+                    "variantes_mismo_tamaño": _variantes(n),
+                }
+                for n in top
+            ]
+        },
+        ensure_ascii=False,
+    )
 
 
 def generar_presupuesto(
@@ -235,10 +255,13 @@ def generar_presupuesto(
     if not neumatico:
         return _error_neumatico_no_encontrado(neumatico_id)
     if neumatico["stock"] < cantidad:
-        return json.dumps({
-            "error": f"Solo hay {neumatico['stock']} unidades en stock.",
-            "stock_disponible": neumatico["stock"],
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "error": f"Solo hay {neumatico['stock']} unidades en stock.",
+                "stock_disponible": neumatico["stock"],
+            },
+            ensure_ascii=False,
+        )
 
     subtotal_neumaticos = neumatico["precio"] * cantidad
     subtotal_instalacion = 0.0
@@ -254,26 +277,29 @@ def generar_presupuesto(
 
     total = subtotal_neumaticos + subtotal_instalacion
 
-    return json.dumps({
-        "presupuesto": {
-            "neumatico": {
-                "id": neumatico["id"],
-                "marca": neumatico["marca"],
-                "modelo": neumatico["modelo"],
-                "medida": neumatico["medida"],
-                "tipo": neumatico["tipo"],
-            },
-            "cantidad": cantidad,
-            "precio_unitario": neumatico["precio"],
-            "subtotal_neumaticos": round(subtotal_neumaticos, 2),
-            "incluir_instalacion": incluir_instalacion,
-            "subtotal_instalacion": round(subtotal_instalacion, 2),
-            "desglose_instalacion": desglose_instalacion,
-            "total": round(total, 2),
-            "envio": None if incluir_instalacion else "Gratis a todo el país",
-            "cuotas": f"Hasta 6 cuotas sin interés de ${round(total / 6, 2):,.2f}",
-        }
-    }, ensure_ascii=False)
+    return json.dumps(
+        {
+            "presupuesto": {
+                "neumatico": {
+                    "id": neumatico["id"],
+                    "marca": neumatico["marca"],
+                    "modelo": neumatico["modelo"],
+                    "medida": neumatico["medida"],
+                    "tipo": neumatico["tipo"],
+                },
+                "cantidad": cantidad,
+                "precio_unitario": neumatico["precio"],
+                "subtotal_neumaticos": round(subtotal_neumaticos, 2),
+                "incluir_instalacion": incluir_instalacion,
+                "subtotal_instalacion": round(subtotal_instalacion, 2),
+                "desglose_instalacion": desglose_instalacion,
+                "total": round(total, 2),
+                "envio": None if incluir_instalacion else "Gratis a todo el país",
+                "cuotas": f"Hasta 6 cuotas sin interés de ${round(total / 6, 2):,.2f}",
+            }
+        },
+        ensure_ascii=False,
+    )
 
 
 _app_callbacks: dict = {}
@@ -305,7 +331,10 @@ def confirmar_venta(
     clave_dedup = f"{session_id}_{neumatico_id}_{cantidad}"
     ultimo = _ventas_confirmadas.get(clave_dedup)
     if ultimo and ahora - ultimo < _VENTA_DEDUP_TTL:
-        return json.dumps({"confirmado": True, "duplicado": True, "mensaje": "Esta venta ya fue confirmada."}, ensure_ascii=False)
+        return json.dumps(
+            {"confirmado": True, "duplicado": True, "mensaje": "Esta venta ya fue confirmada."},
+            ensure_ascii=False,
+        )
     _ventas_confirmadas[clave_dedup] = ahora
 
     neumatico = next((n for n in NEUMATICOS if n["id"] == neumatico_id), None)
@@ -317,25 +346,32 @@ def confirmar_venta(
         return json.dumps({"error": resultado["error"]}, ensure_ascii=False)
 
     try:
-        _obtener_agente    = _app_callbacks.get("obtener_o_asignar_agente")
-        _notificar_venta   = _app_callbacks.get("notificar_venta_interna")
-        _registrar_venta   = _app_callbacks.get("registrar_venta")
+        _obtener_agente = _app_callbacks.get("obtener_o_asignar_agente")
+        _notificar_venta = _app_callbacks.get("notificar_venta_interna")
+        _registrar_venta = _app_callbacks.get("registrar_venta")
         if _obtener_agente and _notificar_venta and _registrar_venta:
             agente = _obtener_agente(session_id)
-            _notificar_venta(neumatico, cantidad, nombre_cliente, sucursal, notas, agente=agente["nombre"])
-            _registrar_venta(session_id, agente["nombre"], neumatico, cantidad, nombre_cliente, sucursal)
+            _notificar_venta(
+                neumatico, cantidad, nombre_cliente, sucursal, notas, agente=agente["nombre"]
+            )
+            _registrar_venta(
+                session_id, agente["nombre"], neumatico, cantidad, nombre_cliente, sucursal
+            )
     except Exception as e:
         logging.getLogger(__name__).error(f"Error enviando notificación de venta: {e}")
 
     total = neumatico["precio"] * cantidad
-    return json.dumps({
-        "confirmado": True,
-        "modelo": f"{neumatico['marca']} {neumatico['modelo']}",
-        "medida": neumatico["medida"],
-        "cantidad": cantidad,
-        "total": total,
-        "stock_restante": resultado["stock_restante"],
-    }, ensure_ascii=False)
+    return json.dumps(
+        {
+            "confirmado": True,
+            "modelo": f"{neumatico['marca']} {neumatico['modelo']}",
+            "medida": neumatico["medida"],
+            "cantidad": cantidad,
+            "total": total,
+            "stock_restante": resultado["stock_restante"],
+        },
+        ensure_ascii=False,
+    )
 
 
 def notificar_dot(
@@ -358,9 +394,9 @@ def escalar_a_humano(
     **_,
 ) -> str:
     try:
-        _obtener_historial   = _app_callbacks.get("obtener_historial")
-        _notificar_escalado  = _app_callbacks.get("notificar_escalado")
-        _marcar_escalado     = _app_callbacks.get("marcar_escalado")
+        _obtener_historial = _app_callbacks.get("obtener_historial")
+        _notificar_escalado = _app_callbacks.get("notificar_escalado")
+        _marcar_escalado = _app_callbacks.get("marcar_escalado")
         if _obtener_historial and _notificar_escalado:
             historial = _obtener_historial(session_id)
             _notificar_escalado(session_id, motivo, historial)
@@ -368,7 +404,9 @@ def escalar_a_humano(
             _marcar_escalado(session_id, True)
     except Exception as e:
         logging.getLogger(__name__).error(f"Error escalando a humano: {e}")
-    return json.dumps({"escalado": True, "mensaje": "Conversación derivada a un humano."}, ensure_ascii=False)
+    return json.dumps(
+        {"escalado": True, "mensaje": "Conversación derivada a un humano."}, ensure_ascii=False
+    )
 
 
 FUNCIONES_HERRAMIENTAS = {

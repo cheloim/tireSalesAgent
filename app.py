@@ -1,6 +1,7 @@
 """Servidor web Flask para el Agente de Ventas de Neumáticos."""
 
 import collections
+import contextlib
 import hmac
 import json
 import logging
@@ -11,21 +12,39 @@ import sqlite3
 import threading
 import time
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 import requests as http
-from flask import Flask, Response, jsonify, request, send_from_directory, session, stream_with_context
+from flask import (
+    Flask,
+    Response,
+    jsonify,
+    request,
+    send_from_directory,
+    session,
+    stream_with_context,
+)
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
-from agent import AGENTES, MODELO_DEFAULT, TEMPERATURA, PROMPT_VERSION, get_prompt_sistema, procesar_mensaje, transcribir_audio, verificar_gemini
+from agent import (
+    AGENTES,
+    MODELO_DEFAULT,
+    PROMPT_VERSION,
+    TEMPERATURA,
+    procesar_mensaje,
+    transcribir_audio,
+    verificar_gemini,
+)
 from inventory import sincronizar_inventario
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 # ── Log buffer en memoria ─────────────────────────────────────
-_log_buffer:  collections.deque = collections.deque(maxlen=500)
+_log_buffer: collections.deque = collections.deque(maxlen=500)
 _log_counter: int = 0
 _log_lock = threading.Lock()
 
@@ -36,15 +55,18 @@ class _MemHandler(logging.Handler):
         try:
             line = self.format(record)
             with _log_lock:
-                _log_buffer.append({
-                    "n":     _log_counter,
-                    "ts":    record.created,
-                    "level": record.levelname,
-                    "msg":   line,
-                })
+                _log_buffer.append(
+                    {
+                        "n": _log_counter,
+                        "ts": record.created,
+                        "level": record.levelname,
+                        "msg": line,
+                    }
+                )
                 _log_counter += 1
         except Exception:
             import sys
+
             sys.stderr.write(f"_MemHandler.emit error: {record}\n")
 
 
@@ -56,7 +78,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "neumaticos-plus-secret-key-2024")
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"]   = os.environ.get("FLASK_ENV") == "production"
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("FLASK_ENV") == "production"
 
 limiter = Limiter(get_remote_address, app=app, storage_uri="memory://", default_limits=[])
 
@@ -68,20 +90,20 @@ _tg_contacts: collections.OrderedDict = collections.OrderedDict()  # session_id 
 _TG_CONTACTS_MAX = 1000
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_API   = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
-WA_TOKEN        = os.environ.get("WHATSAPP_TOKEN", "")
-WA_PHONE_ID     = os.environ.get("WHATSAPP_PHONE_ID", "")
+WA_TOKEN = os.environ.get("WHATSAPP_TOKEN", "")
+WA_PHONE_ID = os.environ.get("WHATSAPP_PHONE_ID", "")
 WA_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
-WA_API          = f"https://graph.facebook.com/v19.0/{WA_PHONE_ID}/messages"
+WA_API = f"https://graph.facebook.com/v19.0/{WA_PHONE_ID}/messages"
 
-TWILIO_SID    = os.environ.get("TWILIO_ACCOUNT_SID", "")
-TWILIO_TOKEN  = os.environ.get("TWILIO_AUTH_TOKEN", "")
+TWILIO_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
 TWILIO_NUMBER = os.environ.get("TWILIO_WHATSAPP_NUMBER", "")
-NGROK_URL     = os.environ.get("NGROK_URL", "").rstrip("/")
+NGROK_URL = os.environ.get("NGROK_URL", "").rstrip("/")
 
 TG_NOTIFY_CHAT_ID = os.environ.get("TG_NOTIFY_CHAT_ID", "")
-WA_NOTIFY_NUMBER  = os.environ.get("WA_NOTIFY_NUMBER", "")
+WA_NOTIFY_NUMBER = os.environ.get("WA_NOTIFY_NUMBER", "")
 
 DASHBOARD_TOKEN = os.environ.get("DASHBOARD_TOKEN", "")
 _RUTAS_PROTEGIDAS = ("/api/dashboard", "/api/debug-session", "/api/logs/stream")
@@ -98,9 +120,10 @@ def _verificar_token_dashboard():
     if not token or not hmac.compare_digest(token, DASHBOARD_TOKEN):
         return jsonify({"error": "Unauthorized"}), 401
 
-ARGENTINA_TZ      = timezone(timedelta(hours=-3))
+
+ARGENTINA_TZ = timezone(timedelta(hours=-3))
 MSG_FUERA_HORARIO = "Nuestro horario de atención es de 07:30 a 23:00 te responderemos en ese horario. Neumáticos Martinez"
-MSG_ESCALADO      = "Tu consulta fue derivada a nuestro equipo. En breve te contactamos."
+MSG_ESCALADO = "Tu consulta fue derivada a nuestro equipo. En breve te contactamos."
 
 INVENTORY_WEBHOOK_SECRET = os.environ.get("INVENTORY_WEBHOOK_SECRET", "")
 
@@ -151,9 +174,14 @@ def _init_db():
                 conn.execute(f"ALTER TABLE historiales ADD COLUMN {col} {tipo}")
         cols_conv = {r[1] for r in conn.execute("PRAGMA table_info(conversations)").fetchall()}
         for col, tipo in [
-            ("modelo", "TEXT"), ("temperatura", "REAL"), ("prompt_version", "TEXT"),
+            ("modelo", "TEXT"),
+            ("temperatura", "REAL"),
+            ("prompt_version", "TEXT"),
             ("debug", "INTEGER DEFAULT 0"),
-            ("confianza", "TEXT"), ("contexto", "INTEGER"), ("memoria", "INTEGER"), ("logica_negocio", "TEXT"),
+            ("confianza", "TEXT"),
+            ("contexto", "INTEGER"),
+            ("memoria", "INTEGER"),
+            ("logica_negocio", "TEXT"),
         ]:
             if col not in cols_conv:
                 conn.execute(f"ALTER TABLE conversations ADD COLUMN {col} {tipo}")
@@ -184,12 +212,14 @@ def _init_db():
         """)
         conn.commit()
 
+
 _init_db()
 
 
 def _cargar_overrides_inventario():
     """Aplica al arranque los overrides de inventario guardados en DB."""
     from inventory import NEUMATICOS
+
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute(
             "SELECT neumatico_id, stock, precio, precio_anterior FROM inventario_overrides"
@@ -208,10 +238,12 @@ def _cargar_overrides_inventario():
     if rows:
         logger.info(f"Inventario: {len(rows)} override(s) aplicado(s) desde DB")
 
+
 _cargar_overrides_inventario()
 
 
 # ── Horario de atención ──────────────────────────────────────
+
 
 def es_horario_atencion() -> bool:
     ahora = datetime.now(ARGENTINA_TZ)
@@ -223,7 +255,7 @@ def _encolar_mensaje_fuera_horario(session_id: str, canal: str, from_id: str, te
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             "INSERT INTO mensajes_fuera_horario (session_id, canal, from_id, texto) VALUES (?, ?, ?, ?)",
-            (session_id, canal, from_id, texto)
+            (session_id, canal, from_id, texto),
         )
         conn.commit()
 
@@ -232,7 +264,7 @@ def _hay_mensaje_pendiente(session_id: str) -> bool:
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
             "SELECT 1 FROM mensajes_fuera_horario WHERE session_id = ? AND procesado = 0 LIMIT 1",
-            (session_id,)
+            (session_id,),
         ).fetchone()
     return row is not None
 
@@ -257,7 +289,7 @@ def _marcar_procesados_fuera_horario(session_id: str):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             "UPDATE mensajes_fuera_horario SET procesado = 1 WHERE session_id = ? AND procesado = 0",
-            (session_id,)
+            (session_id,),
         )
         conn.commit()
 
@@ -287,8 +319,8 @@ def _worker_horario():
             for i, (session_id, grupo) in enumerate(grupos):
                 if i > 0:
                     time.sleep(random.uniform(90, 150))
-                texto   = "\n".join(grupo["textos"])
-                canal   = grupo["canal"]
+                texto = "\n".join(grupo["textos"])
+                canal = grupo["canal"]
                 from_id = grupo["from_id"]
                 try:
                     if canal == "telegram":
@@ -329,7 +361,7 @@ def obtener_conversation_id(session_id: str) -> str:
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
             "SELECT conversation_id FROM conversations WHERE session_id = ? ORDER BY iniciado DESC LIMIT 1",
-            (session_id,)
+            (session_id,),
         ).fetchone()
     return row[0] if row else str(uuid.uuid4())
 
@@ -351,7 +383,8 @@ def guardar_historial(
     datos = json.dumps(historial[-40:], ensure_ascii=False)
     debug_int = 1 if debug else 0
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO historiales (session_id, mensajes, actualizado, canal, debug)
             VALUES (?, ?, datetime('now', 'localtime'), ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
@@ -359,11 +392,16 @@ def guardar_historial(
                 actualizado = excluded.actualizado,
                 canal       = COALESCE(historiales.canal, excluded.canal),
                 debug       = MAX(historiales.debug, excluded.debug)
-        """, (session_id, datos, canal, debug_int))
+        """,
+            (session_id, datos, canal, debug_int),
+        )
         if conversation_id:
-            row = conn.execute("SELECT agente FROM historiales WHERE session_id = ?", (session_id,)).fetchone()
+            row = conn.execute(
+                "SELECT agente FROM historiales WHERE session_id = ?", (session_id,)
+            ).fetchone()
             agente_nombre = row[0] if row else None
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO conversations
                     (conversation_id, session_id, agente, canal, mensajes, iniciado, actualizado,
                      modelo, temperatura, prompt_version, debug,
@@ -386,8 +424,23 @@ def guardar_historial(
                         WHEN excluded.logica_negocio IS NULL THEN conversations.logica_negocio
                         ELSE conversations.logica_negocio || ',' || excluded.logica_negocio
                     END
-            """, (conversation_id, session_id, agente_nombre, canal, datos, modelo, temperatura, prompt_version, debug_int,
-                  confianza, contexto, memoria, logica_negocio))
+            """,
+                (
+                    conversation_id,
+                    session_id,
+                    agente_nombre,
+                    canal,
+                    datos,
+                    modelo,
+                    temperatura,
+                    prompt_version,
+                    debug_int,
+                    confianza,
+                    contexto,
+                    memoria,
+                    logica_negocio,
+                ),
+            )
         conn.commit()
 
 
@@ -399,11 +452,14 @@ def obtener_o_asignar_agente(session_id: str) -> dict:
         if row and row[0]:
             return next((a for a in AGENTES if a["nombre"] == row[0]), AGENTES[0])
         agente = random.choice(AGENTES)
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO historiales (session_id, mensajes, agente, actualizado)
             VALUES (?, '[]', ?, datetime('now', 'localtime'))
             ON CONFLICT(session_id) DO UPDATE SET agente = excluded.agente
-        """, (session_id, agente["nombre"]))
+        """,
+            (session_id, agente["nombre"]),
+        )
         conn.commit()
         return agente
 
@@ -412,7 +468,7 @@ def marcar_escalado(session_id: str, valor: bool = True):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             "UPDATE historiales SET escalado = ? WHERE session_id = ?",
-            (1 if valor else 0, session_id)
+            (1 if valor else 0, session_id),
         )
         conn.commit()
 
@@ -435,11 +491,13 @@ def obtener_session_id() -> str:
 def estado():
     """Verifica el estado de Ollama y retorna info del sistema."""
     disponible, mensaje = verificar_gemini(MODELO_LLM)
-    return jsonify({
-        "ollama_disponible": disponible,
-        "mensaje": mensaje,
-        "modelo": MODELO_LLM,
-    })
+    return jsonify(
+        {
+            "ollama_disponible": disponible,
+            "mensaje": mensaje,
+            "modelo": MODELO_LLM,
+        }
+    )
 
 
 @app.route("/api/chat", methods=["POST"])
@@ -456,10 +514,10 @@ def chat():
     if len(mensaje_usuario) > 4000:
         return jsonify({"error": "El mensaje excede el máximo de 4000 caracteres"}), 400
 
-    session_id      = obtener_session_id()
+    session_id = obtener_session_id()
     historial, segundos_desde_ultimo = obtener_historial(session_id)
     gap_horas = segundos_desde_ultimo / 3600
-    agente          = obtener_o_asignar_agente(session_id)
+    agente = obtener_o_asignar_agente(session_id)
     conversation_id = obtener_conversation_id(session_id)
 
     def generar():
@@ -478,10 +536,21 @@ def chat():
         meta = {}
 
         try:
-            for chunk in procesar_mensaje(mensaje_usuario, historial, session_id, MODELO_LLM, agente, debug=_web_debug_mode, meta=meta, gap_horas=gap_horas):
+            for chunk in procesar_mensaje(
+                mensaje_usuario,
+                historial,
+                session_id,
+                MODELO_LLM,
+                agente,
+                debug=_web_debug_mode,
+                meta=meta,
+                gap_horas=gap_horas,
+            ):
                 texto_completo.append(chunk)
 
-            respuesta_completa = _expandir_ubicaciones_web(limpiar_respuesta("".join(texto_completo)))
+            respuesta_completa = _expandir_ubicaciones_web(
+                limpiar_respuesta("".join(texto_completo))
+            )
 
             if respuesta_completa:
                 partes = [p.strip() for p in respuesta_completa.split("|||") if p.strip()]
@@ -497,8 +566,8 @@ def chat():
                         time.sleep(delay)
                     else:
                         # Entre mensajes: pausa de "lectura", luego typing indicator, luego pausa de escritura.
-                        time.sleep(random.uniform(2.0, 3.0))   # pausa de "lectura"
-                        yield "data: {\"tipo\": \"typing\"}\n\n"
+                        time.sleep(random.uniform(2.0, 3.0))  # pausa de "lectura"
+                        yield 'data: {"tipo": "typing"}\n\n'
                         delay = random.uniform(3.0, 5.0) + (palabras * random.uniform(0.05, 0.09))
                         delay = min(delay, 9.0)
                         time.sleep(delay)
@@ -509,20 +578,26 @@ def chat():
             if respuesta_completa:
                 historial.append({"role": "user", "content": mensaje_usuario})
                 historial.append({"role": "assistant", "content": respuesta_completa})
-                guardar_historial(session_id, historial, conversation_id=conversation_id,
-                                  modelo=MODELO_LLM, temperatura=TEMPERATURA, prompt_version=PROMPT_VERSION,
-                                  debug=_web_debug_mode,
-                                  confianza=meta.get("confianza"),
-                                  contexto=meta.get("contexto"),
-                                  memoria=meta.get("memoria"),
-                                  logica_negocio=",".join(meta.get("logica_negocio") or []) or None)
+                guardar_historial(
+                    session_id,
+                    historial,
+                    conversation_id=conversation_id,
+                    modelo=MODELO_LLM,
+                    temperatura=TEMPERATURA,
+                    prompt_version=PROMPT_VERSION,
+                    debug=_web_debug_mode,
+                    confianza=meta.get("confianza"),
+                    contexto=meta.get("contexto"),
+                    memoria=meta.get("memoria"),
+                    logica_negocio=",".join(meta.get("logica_negocio") or []) or None,
+                )
 
         except GeneratorExit:
             return
         except Exception as e:
             logger.error(f"Error en streaming: {e}")
 
-        yield "data: {\"tipo\": \"fin\"}\n\n"
+        yield 'data: {"tipo": "fin"}\n\n'
 
     def generar_seguro():
         try:
@@ -569,29 +644,37 @@ def cambiar_modelo():
 
 # ── Notificaciones internas de venta ─────────────────────────
 
+
 def _enviar_notificacion(texto: str):
     """Manda texto a TG y WA de notificaciones, en chunks si es necesario."""
     CHUNK = 4000
     if TG_NOTIFY_CHAT_ID:
         for i in range(0, len(texto), CHUNK):
-            tg_send_message(int(TG_NOTIFY_CHAT_ID), texto[i:i + CHUNK])
+            tg_send_message(int(TG_NOTIFY_CHAT_ID), texto[i : i + CHUNK])
     if WA_NOTIFY_NUMBER:
         for i in range(0, len(texto), CHUNK):
             try:
-                http.post(WA_API,
-                    headers={"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"},
+                http.post(
+                    WA_API,
+                    headers={
+                        "Authorization": f"Bearer {WA_TOKEN}",
+                        "Content-Type": "application/json",
+                    },
                     json={
                         "messaging_product": "whatsapp",
                         "to": WA_NOTIFY_NUMBER,
                         "type": "text",
-                        "text": {"body": texto[i:i + CHUNK]},
-                    }, timeout=10)
+                        "text": {"body": texto[i : i + CHUNK]},
+                    },
+                    timeout=10,
+                )
             except Exception as e:
                 logger.error(f"Error enviando notificación WA: {e}")
 
 
 def notificar_dot(session_id: str, neumaticos: str = ""):
     from datetime import datetime
+
     fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
 
     if session_id.startswith("wa_"):
@@ -605,25 +688,34 @@ def notificar_dot(session_id: str, neumaticos: str = ""):
     else:
         contacto = "Web (sin teléfono)"
 
-    lineas = filter(None, [
-        "ℹ SOLICITUD DE DOT",
-        f"Motivo:    Solicitud de DOT",
-        f"Neumático: {neumaticos}" if neumaticos else None,
-        f"Contacto:  {contacto}",
-        f"Fecha:     {fecha}",
-    ])
+    lineas = filter(
+        None,
+        [
+            "ℹ SOLICITUD DE DOT",
+            "Motivo:    Solicitud de DOT",
+            f"Neumático: {neumaticos}" if neumaticos else None,
+            f"Contacto:  {contacto}",
+            f"Fecha:     {fecha}",
+        ],
+    )
     _enviar_notificacion("\n".join(lineas))
 
 
 def notificar_escalado(session_id: str, motivo: str, historial: list[dict]):
     from datetime import datetime
+
     fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
-    alerta = "\n".join(filter(None, [
-        "⚠ DERIVACIÓN A HUMANO",
-        f"Sesión:  {session_id}",
-        f"Motivo:  {motivo}" if motivo else None,
-        f"Fecha:   {fecha}",
-    ]))
+    alerta = "\n".join(
+        filter(
+            None,
+            [
+                "⚠ DERIVACIÓN A HUMANO",
+                f"Sesión:  {session_id}",
+                f"Motivo:  {motivo}" if motivo else None,
+                f"Fecha:   {fecha}",
+            ],
+        )
+    )
     _enviar_notificacion(alerta)
 
     if historial:
@@ -641,8 +733,11 @@ def notificar_escalado(session_id: str, motivo: str, historial: list[dict]):
         wa_send_button(WA_NOTIFY_NUMBER, "¿Marcar como resuelto?", "✅ Resolver", cb)
 
 
-def notificar_venta_interna(neumatico: dict, cantidad: int, nombre_cliente: str, sucursal: str, notas: str, agente: str = ""):
+def notificar_venta_interna(
+    neumatico: dict, cantidad: int, nombre_cliente: str, sucursal: str, notas: str, agente: str = ""
+):
     from datetime import datetime
+
     fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
     total = neumatico["precio"] * cantidad
     lineas = [
@@ -664,31 +759,50 @@ def notificar_venta_interna(neumatico: dict, cantidad: int, nombre_cliente: str,
     _enviar_notificacion("\n".join(lineas))
 
 
-def registrar_venta(session_id: str, agente: str, neumatico: dict, cantidad: int, cliente: str, sucursal: str):
+def registrar_venta(
+    session_id: str, agente: str, neumatico: dict, cantidad: int, cliente: str, sucursal: str
+):
     with sqlite3.connect(DB_PATH) as conn:
-        existing = conn.execute("""
+        existing = conn.execute(
+            """
             SELECT id FROM ventas
             WHERE session_id = ? AND marca = ? AND modelo = ? AND medida = ? AND cantidad = ?
               AND fecha >= datetime('now', 'localtime', '-5 minutes')
-        """, (session_id, neumatico.get("marca", ""), neumatico.get("modelo", ""),
-              neumatico.get("medida", ""), cantidad)).fetchone()
+        """,
+            (
+                session_id,
+                neumatico.get("marca", ""),
+                neumatico.get("modelo", ""),
+                neumatico.get("medida", ""),
+                cantidad,
+            ),
+        ).fetchone()
         if existing:
             logger.warning(f"Venta duplicada ignorada [{session_id}]")
             return
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO ventas (session_id, agente, marca, modelo, medida, cantidad, total, cliente, sucursal)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            session_id, agente,
-            neumatico.get("marca", ""), neumatico.get("modelo", ""), neumatico.get("medida", ""),
-            cantidad, neumatico.get("precio", 0) * cantidad,
-            cliente, sucursal,
-        ))
+        """,
+            (
+                session_id,
+                agente,
+                neumatico.get("marca", ""),
+                neumatico.get("modelo", ""),
+                neumatico.get("medida", ""),
+                cantidad,
+                neumatico.get("precio", 0) * cantidad,
+                cliente,
+                sucursal,
+            ),
+        )
         conn.commit()
 
 
-from tools import registrar_callbacks as _registrar_tool_callbacks
-_registrar_tool_callbacks(
+from tools import registrar_callbacks as _registrar_tool_callbacks  # noqa: E402
+
+_registrar_tool_callbacks(  # noqa: E402
     notificar_venta_interna=notificar_venta_interna,
     registrar_venta=registrar_venta,
     obtener_o_asignar_agente=obtener_o_asignar_agente,
@@ -729,7 +843,9 @@ def _buffer_message(session_id: str, text: str, flush_fn):
                 except Exception as e:
                     logger.error(f"Error en flush de buffer [{session_id}]: {e}", exc_info=True)
                     with _buf_lock:
-                        _msg_buffers.setdefault(session_id, {"messages": [], "timer": None})["messages"].extend(msgs)
+                        _msg_buffers.setdefault(session_id, {"messages": [], "timer": None})[
+                            "messages"
+                        ].extend(msgs)
 
         timer = threading.Timer(MSG_BUFFER_DELAY, _flush)
         buf["timer"] = timer
@@ -737,6 +853,7 @@ def _buffer_message(session_id: str, text: str, flush_fn):
 
 
 # ── Telegram helpers ──────────────────────────────────────────
+
 
 def tg_descargar_audio(file_id: str) -> bytes | None:
     def _intentar() -> bytes:
@@ -774,12 +891,22 @@ def _procesar_audio_diferido(chat_id: int, file_id: str, session_id: str, modelo
 
     historial, segundos_desde_ultimo = obtener_historial(session_id)
     conversation_id = obtener_conversation_id(session_id)
-    agente          = obtener_o_asignar_agente(session_id)
+    agente = obtener_o_asignar_agente(session_id)
     tg_send_typing(chat_id)
     meta_audio = {}
     gap_horas_audio = segundos_desde_ultimo / 3600 if segundos_desde_ultimo else 0
     try:
-        chunks    = list(procesar_mensaje(text, historial, session_id, modelo, agente, meta=meta_audio, gap_horas=gap_horas_audio))
+        chunks = list(
+            procesar_mensaje(
+                text,
+                historial,
+                session_id,
+                modelo,
+                agente,
+                meta=meta_audio,
+                gap_horas=gap_horas_audio,
+            )
+        )
         respuesta = "".join(chunks).strip()
     except Exception as e:
         logger.error(f"Error procesando audio diferido: {e}")
@@ -796,27 +923,34 @@ def _procesar_audio_diferido(chat_id: int, file_id: str, session_id: str, modelo
             time.sleep(random.uniform(1.5, 3.0))
         tg_send_message(chat_id, parte)
 
-    historial.append({"role": "user",      "content": text})
+    historial.append({"role": "user", "content": text})
     historial.append({"role": "assistant", "content": respuesta})
-    guardar_historial(session_id, historial, conversation_id=conversation_id,
-                      modelo=MODELO_LLM, temperatura=TEMPERATURA, prompt_version=PROMPT_VERSION,
-                      debug=False,
-                      confianza=meta_audio.get("confianza"), contexto=meta_audio.get("contexto"),
-                      memoria=meta_audio.get("memoria"),
-                      logica_negocio=",".join(meta_audio.get("logica_negocio") or []) or None)
+    guardar_historial(
+        session_id,
+        historial,
+        conversation_id=conversation_id,
+        modelo=MODELO_LLM,
+        temperatura=TEMPERATURA,
+        prompt_version=PROMPT_VERSION,
+        debug=False,
+        confianza=meta_audio.get("confianza"),
+        contexto=meta_audio.get("contexto"),
+        memoria=meta_audio.get("memoria"),
+        logica_negocio=",".join(meta_audio.get("logica_negocio") or []) or None,
+    )
 
 
 IMAGENES_MODELOS = {
-    "es32":  os.path.join(os.path.dirname(__file__), "public/imagenes/es32.webp"),
-    "ae61":  os.path.join(os.path.dirname(__file__), "public/imagenes/ae61.webp"),
+    "es32": os.path.join(os.path.dirname(__file__), "public/imagenes/es32.webp"),
+    "ae61": os.path.join(os.path.dirname(__file__), "public/imagenes/ae61.webp"),
     "ac02a": os.path.join(os.path.dirname(__file__), "public/imagenes/ac02a.webp"),
 }
 
-_IMAGEN_RE    = re.compile(r"<imagen>(es32|ae61|ac02a)</imagen>", re.IGNORECASE)
-_UBICACION_RE       = re.compile(r"<ubicacion>(acassuso|martinez)</ubicacion>", re.IGNORECASE)
+_IMAGEN_RE = re.compile(r"<imagen>(es32|ae61|ac02a)</imagen>", re.IGNORECASE)
+_UBICACION_RE = re.compile(r"<ubicacion>(acassuso|martinez)</ubicacion>", re.IGNORECASE)
 _UBICACION_RESTO_RE = re.compile(r"</?ubicacion[^>]*>?", re.IGNORECASE)
-_THOUGHT_RE   = re.compile(r"<thought>.*?</thought>", re.DOTALL | re.IGNORECASE)
-_HTML_TAG_RE  = re.compile(r"</?(?!tool|imagen|ubicacion)\w+[^>]*>", re.IGNORECASE)
+_THOUGHT_RE = re.compile(r"<thought>.*?</thought>", re.DOTALL | re.IGNORECASE)
+_HTML_TAG_RE = re.compile(r"</?(?!tool|imagen|ubicacion)\w+[^>]*>", re.IGNORECASE)
 
 _mensajes_procesados: dict[str, float] = {}
 _DEDUP_TTL = 300  # segundos
@@ -826,7 +960,9 @@ _dedup_lock = threading.Lock()
 def _ya_procesado(msg_id: str) -> bool:
     ahora = time.time()
     with _dedup_lock:
-        _mensajes_procesados.update({k: v for k, v in _mensajes_procesados.items() if ahora - v < _DEDUP_TTL})
+        _mensajes_procesados.update(
+            {k: v for k, v in _mensajes_procesados.items() if ahora - v < _DEDUP_TTL}
+        )
         if msg_id in _mensajes_procesados:
             return True
         _mensajes_procesados[msg_id] = ahora
@@ -856,16 +992,18 @@ def limpiar_respuesta(text: str) -> str:
 
 UBICACIONES = {
     "acassuso": {
-        "lat": -34.479471, "lng": -58.5073362,
-        "nombre":    "Neumáticos Martinez - Acassuso",
+        "lat": -34.479471,
+        "lng": -58.5073362,
+        "nombre": "Neumáticos Martinez - Acassuso",
         "direccion": "Av. Santa Fe 704, B1640 Acassuso, Buenos Aires",
-        "maps_url":  "https://maps.app.goo.gl/bKdFupLX1jiJqjzg9",
+        "maps_url": "https://maps.app.goo.gl/bKdFupLX1jiJqjzg9",
     },
     "martinez": {
-        "lat": -34.4867215, "lng": -58.5018529,
-        "nombre":    "Neumáticos Martinez - Martínez",
+        "lat": -34.4867215,
+        "lng": -58.5018529,
+        "nombre": "Neumáticos Martinez - Martínez",
         "direccion": "Av. Santa Fe 1628, B1640IFQ Martínez, Buenos Aires",
-        "maps_url":  "https://maps.app.goo.gl/vx2WDyoj72rUe9Ju8",
+        "maps_url": "https://maps.app.goo.gl/vx2WDyoj72rUe9Ju8",
     },
 }
 
@@ -885,9 +1023,12 @@ def tg_send_photo(chat_id: int, modelo: str):
         return
     try:
         with open(path, "rb") as f:
-            http.post(f"{TELEGRAM_API}/sendPhoto",
-                      data={"chat_id": chat_id},
-                      files={"photo": f}, timeout=20)
+            http.post(
+                f"{TELEGRAM_API}/sendPhoto",
+                data={"chat_id": chat_id},
+                files={"photo": f},
+                timeout=20,
+            )
     except Exception as e:
         logger.error(f"Error enviando imagen Telegram: {e}")
 
@@ -904,43 +1045,55 @@ def tg_send_location(chat_id: int, sucursal: str):
 
 
 def tg_send_typing(chat_id: int):
-    try:
-        http.post(f"{TELEGRAM_API}/sendChatAction",
-                  json={"chat_id": chat_id, "action": "typing"}, timeout=5)
-    except Exception:
-        pass
+    with contextlib.suppress(Exception):
+        http.post(
+            f"{TELEGRAM_API}/sendChatAction",
+            json={"chat_id": chat_id, "action": "typing"},
+            timeout=5,
+        )
 
 
 def tg_send_message(chat_id: int, text: str):
     try:
-        http.post(f"{TELEGRAM_API}/sendMessage",
-                  json={"chat_id": chat_id, "text": text}, timeout=10)
+        http.post(
+            f"{TELEGRAM_API}/sendMessage", json={"chat_id": chat_id, "text": text}, timeout=10
+        )
     except Exception as e:
         logger.error(f"Error enviando mensaje Telegram: {e}")
 
 
 def tg_send_with_button(chat_id: int, text: str, button_text: str, callback_data: str):
     try:
-        http.post(f"{TELEGRAM_API}/sendMessage", json={
-            "chat_id": chat_id,
-            "text": text,
-            "reply_markup": {"inline_keyboard": [[{"text": button_text, "callback_data": callback_data}]]},
-        }, timeout=10)
+        http.post(
+            f"{TELEGRAM_API}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": text,
+                "reply_markup": {
+                    "inline_keyboard": [[{"text": button_text, "callback_data": callback_data}]]
+                },
+            },
+            timeout=10,
+        )
     except Exception as e:
         logger.error(f"Error enviando mensaje TG con botón: {e}")
 
 
 def tg_answer_callback(callback_query_id: str, text: str = ""):
     try:
-        http.post(f"{TELEGRAM_API}/answerCallbackQuery",
-                  json={"callback_query_id": callback_query_id, "text": text}, timeout=10)
+        http.post(
+            f"{TELEGRAM_API}/answerCallbackQuery",
+            json={"callback_query_id": callback_query_id, "text": text},
+            timeout=10,
+        )
     except Exception as e:
         logger.error(f"Error respondiendo callback TG: {e}")
 
 
 def wa_send_button(to: str, body: str, button_text: str, button_id: str):
     try:
-        http.post(WA_API,
+        http.post(
+            WA_API,
             headers={"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"},
             json={
                 "messaging_product": "whatsapp",
@@ -949,23 +1102,29 @@ def wa_send_button(to: str, body: str, button_text: str, button_id: str):
                 "interactive": {
                     "type": "button",
                     "body": {"text": body},
-                    "action": {"buttons": [{"type": "reply", "reply": {"id": button_id, "title": button_text}}]},
+                    "action": {
+                        "buttons": [
+                            {"type": "reply", "reply": {"id": button_id, "title": button_text}}
+                        ]
+                    },
                 },
-            }, timeout=10)
+            },
+            timeout=10,
+        )
     except Exception as e:
         logger.error(f"Error enviando botón WA: {e}")
 
 
 @app.route("/webhook/telegram", methods=["POST"])
 def telegram_webhook():
-    update  = request.get_json(silent=True) or {}
+    update = request.get_json(silent=True) or {}
     logger.info(f"TG update keys: {list(update.keys())}")
 
     cb = update.get("callback_query")
     if cb:
         data = cb.get("data", "")
         if data.startswith("resolver_"):
-            sid = data[len("resolver_"):]
+            sid = data[len("resolver_") :]
             marcar_escalado(sid, valor=False)
             tg_answer_callback(cb["id"], "✅ Sesión reactivada")
             logger.info(f"TG callback: sesión {sid} resuelta por operador")
@@ -976,7 +1135,7 @@ def telegram_webhook():
         return "", 200
 
     chat_id = message["chat"]["id"]
-    msg_id  = f"tg_{chat_id}_{message.get('message_id')}"
+    msg_id = f"tg_{chat_id}_{message.get('message_id')}"
     logger.info(f"TG msg_id={msg_id} keys={list(message.keys())}")
     sender = message.get("from") or {}
     contact = message.get("contact") or {}
@@ -989,7 +1148,8 @@ def telegram_webhook():
     info = _tg_contacts[sid]
     if not info["name"]:
         info["name"] = (
-            f"@{sender['username']}" if sender.get("username")
+            f"@{sender['username']}"
+            if sender.get("username")
             else " ".join(filter(None, [sender.get("first_name"), sender.get("last_name")])) or ""
         )
     if contact.get("phone_number") and str(contact.get("user_id", "")) == sid:
@@ -997,7 +1157,7 @@ def telegram_webhook():
     if _ya_procesado(msg_id):
         logger.info(f"TG duplicado ignorado: {msg_id}")
         return "", 200
-    text    = (message.get("text") or message.get("caption") or "").strip()
+    text = (message.get("text") or message.get("caption") or "").strip()
     logger.info(f"TG text='{text[:100]}' reply={bool(message.get('reply_to_message'))}")
 
     reply = message.get("reply_to_message")
@@ -1005,7 +1165,9 @@ def telegram_webhook():
         reply_text = (reply.get("text") or reply.get("caption") or "").strip()[:300]
         if reply_text:
             historial_actual, _ = obtener_historial(str(chat_id))
-            ya_en_contexto = any(reply_text[:100] in m.get("content", "") for m in historial_actual[-10:])
+            ya_en_contexto = any(
+                reply_text[:100] in m.get("content", "") for m in historial_actual[-10:]
+            )
             if not ya_en_contexto:
                 text = f"{text} [contexto del mensaje al que respondés: {reply_text}]"
 
@@ -1014,12 +1176,21 @@ def telegram_webhook():
         tg_send_typing(chat_id)
         audio_bytes = tg_descargar_audio(voice["file_id"])
         if not audio_bytes:
-            tg_send_message(chat_id, "Ahora mismo no puedo escuchar audios, estoy un poco ocupado. Esperame un ratito que te respondo.")
-            threading.Timer(300, _procesar_audio_diferido, args=(chat_id, voice["file_id"], str(chat_id), MODELO_LLM)).start()
+            tg_send_message(
+                chat_id,
+                "Ahora mismo no puedo escuchar audios, estoy un poco ocupado. Esperame un ratito que te respondo.",
+            )
+            threading.Timer(
+                300,
+                _procesar_audio_diferido,
+                args=(chat_id, voice["file_id"], str(chat_id), MODELO_LLM),
+            ).start()
             return "", 200
         text = transcribir_audio(audio_bytes, MODELO_LLM) or ""
         if not text:
-            tg_send_message(chat_id, "No se escucha bien el audio. Me lo mandás de nuevo o me escribís?")
+            tg_send_message(
+                chat_id, "No se escucha bien el audio. Me lo mandás de nuevo o me escribís?"
+            )
             return "", 200
         logger.info(f"Audio transcripto [{chat_id}]: {text}")
 
@@ -1051,7 +1222,7 @@ def _procesar_canal(
 ):
     historial, segundos_desde_ultimo = obtener_historial(session_id)
     conversation_id = obtener_conversation_id(session_id)
-    agente          = obtener_o_asignar_agente(session_id)
+    agente = obtener_o_asignar_agente(session_id)
     logger.info(f"[{canal}] [{session_id}] agente={agente['nombre']}: {texto[:200]}")
 
     gap_horas = segundos_desde_ultimo / 3600 if segundos_desde_ultimo else 0
@@ -1063,7 +1234,11 @@ def _procesar_canal(
     meta = {}
     for intento in range(4):
         try:
-            chunks    = list(procesar_mensaje(texto, historial, session_id, MODELO_LLM, agente, meta=meta, gap_horas=gap_horas))
+            chunks = list(
+                procesar_mensaje(
+                    texto, historial, session_id, MODELO_LLM, agente, meta=meta, gap_horas=gap_horas
+                )
+            )
             respuesta = limpiar_respuesta("".join(chunks))
             break
         except Exception as e:
@@ -1078,9 +1253,11 @@ def _procesar_canal(
     if not respuesta:
         return
 
-    imagen_match    = _IMAGEN_RE.search(respuesta)
+    imagen_match = _IMAGEN_RE.search(respuesta)
     ubicacion_match = _UBICACION_RE.findall(respuesta) if send_location_fn else []
-    respuesta_limpia = _UBICACION_RESTO_RE.sub("", _UBICACION_RE.sub("", _IMAGEN_RE.sub("", respuesta))).strip()
+    respuesta_limpia = _UBICACION_RESTO_RE.sub(
+        "", _UBICACION_RE.sub("", _IMAGEN_RE.sub("", respuesta))
+    ).strip()
 
     if imagen_match and send_photo_fn:
         send_photo_fn(imagen_match.group(1))
@@ -1096,18 +1273,28 @@ def _procesar_canal(
                 time.sleep(random.uniform(1.5, 3.0))
         send_text_fn(parte)
 
-    historial.append({"role": "user",      "content": texto})
+    historial.append({"role": "user", "content": texto})
     historial.append({"role": "assistant", "content": respuesta})
-    guardar_historial(session_id, historial, canal=canal, conversation_id=conversation_id,
-                      modelo=MODELO_LLM, temperatura=TEMPERATURA, prompt_version=PROMPT_VERSION,
-                      confianza=meta.get("confianza"), contexto=meta.get("contexto"),
-                      memoria=meta.get("memoria"),
-                      logica_negocio=",".join(meta.get("logica_negocio") or []) or None)
+    guardar_historial(
+        session_id,
+        historial,
+        canal=canal,
+        conversation_id=conversation_id,
+        modelo=MODELO_LLM,
+        temperatura=TEMPERATURA,
+        prompt_version=PROMPT_VERSION,
+        confianza=meta.get("confianza"),
+        contexto=meta.get("contexto"),
+        memoria=meta.get("memoria"),
+        logica_negocio=",".join(meta.get("logica_negocio") or []) or None,
+    )
 
 
 def _procesar_tg(chat_id: int, session_id: str, text: str):
     _procesar_canal(
-        texto=text, session_id=session_id, canal="telegram",
+        texto=text,
+        session_id=session_id,
+        canal="telegram",
         send_text_fn=lambda p: tg_send_message(chat_id, p),
         send_photo_fn=lambda m: tg_send_photo(chat_id, m),
         send_location_fn=lambda s: tg_send_location(chat_id, s),
@@ -1120,8 +1307,7 @@ def setup_telegram():
     ngrok_url = request.args.get("url", "").rstrip("/")
     if not ngrok_url:
         return jsonify({"error": "Pasá ?url=https://tu-ngrok-url"}), 400
-    res = http.post(f"{TELEGRAM_API}/setWebhook",
-                    json={"url": f"{ngrok_url}/webhook/telegram"})
+    res = http.post(f"{TELEGRAM_API}/setWebhook", json={"url": f"{ngrok_url}/webhook/telegram"})
     return jsonify(res.json())
 
 
@@ -1143,18 +1329,23 @@ def wa_send_message(to: str, text: str) -> str | None:
     """Envía mensaje WA y registra el message_id para tracking de fallos. Retorna el message_id."""
     ahora = time.time()
     with _wa_pendientes_lock:
-        expirados = [k for k, v in _wa_pendientes.items() if ahora - v.get("ts", 0) > _WA_PENDIENTE_TTL]
+        expirados = [
+            k for k, v in _wa_pendientes.items() if ahora - v.get("ts", 0) > _WA_PENDIENTE_TTL
+        ]
         for k in expirados:
             del _wa_pendientes[k]
     try:
-        res = http.post(WA_API,
-                  headers={"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"},
-                  json={
-                      "messaging_product": "whatsapp",
-                      "to": to,
-                      "type": "text",
-                      "text": {"body": text},
-                  }, timeout=10)
+        res = http.post(
+            WA_API,
+            headers={"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"},
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "text",
+                "text": {"body": text},
+            },
+            timeout=10,
+        )
         msg_id = res.json().get("messages", [{}])[0].get("id")
         if msg_id:
             with _wa_pendientes_lock:
@@ -1171,26 +1362,35 @@ def _wa_reintentar(msg_id: str):
         if not info:
             return
         if info["intentos"] >= _MAX_REINTENTOS_WA:
-            logger.error(f"WA mensaje {msg_id} falló tras {_MAX_REINTENTOS_WA} intentos para {info['to']}")
+            logger.error(
+                f"WA mensaje {msg_id} falló tras {_MAX_REINTENTOS_WA} intentos para {info['to']}"
+            )
             del _wa_pendientes[msg_id]
             return
         info["intentos"] += 1
 
     logger.info(f"Reintentando mensaje WA {msg_id} (intento {info['intentos']})")
     try:
-        res = http.post(WA_API,
-                  headers={"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"},
-                  json={
-                      "messaging_product": "whatsapp",
-                      "to": info["to"],
-                      "type": "text",
-                      "text": {"body": info["text"]},
-                  }, timeout=10)
+        res = http.post(
+            WA_API,
+            headers={"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"},
+            json={
+                "messaging_product": "whatsapp",
+                "to": info["to"],
+                "type": "text",
+                "text": {"body": info["text"]},
+            },
+            timeout=10,
+        )
         new_id = res.json().get("messages", [{}])[0].get("id")
         with _wa_pendientes_lock:
             del _wa_pendientes[msg_id]
             if new_id:
-                _wa_pendientes[new_id] = {"to": info["to"], "text": info["text"], "intentos": info["intentos"]}
+                _wa_pendientes[new_id] = {
+                    "to": info["to"],
+                    "text": info["text"],
+                    "intentos": info["intentos"],
+                }
     except Exception as e:
         logger.error(f"Error en reintento WA {msg_id}: {e}")
 
@@ -1217,22 +1417,25 @@ def wa_send_photo(to: str, modelo: str):
         if not media_id:
             logger.error(f"No se obtuvo media_id: {upload.text}")
             return
-        http.post(WA_API,
-                  headers={"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"},
-                  json={
-                      "messaging_product": "whatsapp",
-                      "to": to,
-                      "type": "image",
-                      "image": {"id": media_id},
-                  }, timeout=10)
+        http.post(
+            WA_API,
+            headers={"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"},
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "image",
+                "image": {"id": media_id},
+            },
+            timeout=10,
+        )
     except Exception as e:
         logger.error(f"Error enviando imagen WhatsApp: {e}")
 
 
 @app.route("/webhook/whatsapp", methods=["GET"])
 def whatsapp_verify():
-    mode      = request.args.get("hub.mode")
-    token     = request.args.get("hub.verify_token")
+    mode = request.args.get("hub.mode")
+    token = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
     if mode == "subscribe" and token == WA_VERIFY_TOKEN:
         return challenge, 200
@@ -1243,14 +1446,14 @@ def whatsapp_verify():
 def whatsapp_webhook():
     data = request.get_json(silent=True) or {}
     try:
-        entry   = data["entry"][0]
+        entry = data["entry"][0]
         changes = entry["changes"][0]["value"]
     except (KeyError, IndexError):
         return "", 200
 
     # Manejar status updates (delivered, failed, etc.)
     for status in changes.get("statuses", []):
-        msg_id     = status.get("id")
+        msg_id = status.get("id")
         status_val = status.get("status")
         if status_val == "delivered":
             with _wa_pendientes_lock:
@@ -1270,13 +1473,13 @@ def whatsapp_webhook():
         return "", 200
 
     from_number = message["from"]
-    msg_type    = message.get("type")
+    msg_type = message.get("type")
 
     if msg_type == "interactive":
         btn = (message.get("interactive") or {}).get("button_reply") or {}
         btn_id = btn.get("id", "")
         if btn_id.startswith("resolver_") and from_number == WA_NOTIFY_NUMBER:
-            sid = btn_id[len("resolver_"):]
+            sid = btn_id[len("resolver_") :]
             marcar_escalado(sid, valor=False)
             wa_send_message(WA_NOTIFY_NUMBER, f"✅ Sesión {sid} reactivada.")
             logger.info(f"WA button: sesión {sid} resuelta por operador")
@@ -1287,21 +1490,29 @@ def whatsapp_webhook():
     elif msg_type == "audio":
         audio_id = message["audio"]["id"]
         try:
-            media_url = http.get(
-                f"https://graph.facebook.com/v19.0/{audio_id}",
-                headers={"Authorization": f"Bearer {WA_TOKEN}"}, timeout=10
-            ).json().get("url")
+            media_url = (
+                http.get(
+                    f"https://graph.facebook.com/v19.0/{audio_id}",
+                    headers={"Authorization": f"Bearer {WA_TOKEN}"},
+                    timeout=10,
+                )
+                .json()
+                .get("url")
+            )
             audio_bytes = http.get(
-                media_url,
-                headers={"Authorization": f"Bearer {WA_TOKEN}"}, timeout=30
+                media_url, headers={"Authorization": f"Bearer {WA_TOKEN}"}, timeout=30
             ).content
         except Exception as e:
             logger.error(f"Error descargando audio WhatsApp: {e}")
-            wa_send_message(from_number, "No se escucha bien el audio. Me lo mandás de nuevo o me escribís?")
+            wa_send_message(
+                from_number, "No se escucha bien el audio. Me lo mandás de nuevo o me escribís?"
+            )
             return "", 200
         text = transcribir_audio(audio_bytes, MODELO_LLM) or ""
         if not text:
-            wa_send_message(from_number, "No se escucha bien el audio. Me lo mandás de nuevo o me escribís?")
+            wa_send_message(
+                from_number, "No se escucha bien el audio. Me lo mandás de nuevo o me escribís?"
+            )
             return "", 200
         logger.info(f"Audio WA transcripto [{from_number}]: {text}")
     else:
@@ -1326,13 +1537,16 @@ def whatsapp_webhook():
 
 def _procesar_wa(from_number: str, session_id: str, text: str):
     _procesar_canal(
-        texto=text, session_id=session_id, canal="whatsapp",
+        texto=text,
+        session_id=session_id,
+        canal="whatsapp",
         send_text_fn=lambda p: wa_send_message(from_number, p),
         send_photo_fn=lambda m: wa_send_photo(from_number, m),
     )
 
 
 # ── Twilio helpers ────────────────────────────────────────────
+
 
 def twilio_send_message(to: str, text: str):
     try:
@@ -1342,7 +1556,9 @@ def twilio_send_message(to: str, text: str):
             data={"From": TWILIO_NUMBER, "To": to, "Body": text},
             timeout=10,
         )
-        logger.info(f"Twilio send [{res.status_code}] to={to} from={TWILIO_NUMBER}: {res.text[:200]}")
+        logger.info(
+            f"Twilio send [{res.status_code}] to={to} from={TWILIO_NUMBER}: {res.text[:200]}"
+        )
     except Exception as e:
         logger.error(f"Error enviando mensaje Twilio: {e}")
 
@@ -1381,8 +1597,8 @@ def twilio_webhook():
         return "", 200
 
     from_number = request.form.get("From", "")
-    msg_type    = request.form.get("MediaContentType0", "")
-    text        = request.form.get("Body", "").strip()
+    msg_type = request.form.get("MediaContentType0", "")
+    text = request.form.get("Body", "").strip()
 
     if msg_type.startswith("audio/"):
         media_url = request.form.get("MediaUrl0", "")
@@ -1390,11 +1606,15 @@ def twilio_webhook():
             audio_bytes = http.get(media_url, auth=(TWILIO_SID, TWILIO_TOKEN), timeout=30).content
         except Exception as e:
             logger.error(f"Error descargando audio Twilio: {e}")
-            twilio_send_message(from_number, "No se escucha bien el audio. Me lo mandás de nuevo o me escribís?")
+            twilio_send_message(
+                from_number, "No se escucha bien el audio. Me lo mandás de nuevo o me escribís?"
+            )
             return "", 200
         text = transcribir_audio(audio_bytes, MODELO_LLM) or ""
         if not text:
-            twilio_send_message(from_number, "No se escucha bien el audio. Me lo mandás de nuevo o me escribís?")
+            twilio_send_message(
+                from_number, "No se escucha bien el audio. Me lo mandás de nuevo o me escribís?"
+            )
             return "", 200
         logger.info(f"Audio Twilio transcripto [{from_number}]: {text}")
 
@@ -1417,7 +1637,9 @@ def twilio_webhook():
 
 def _procesar_twilio(from_number: str, session_id: str, text: str):
     _procesar_canal(
-        texto=text, session_id=session_id, canal="whatsapp",
+        texto=text,
+        session_id=session_id,
+        canal="whatsapp",
         send_text_fn=lambda p: twilio_send_message(from_number, p),
         send_photo_fn=lambda m: twilio_send_photo(from_number, m),
         send_location_fn=lambda s: twilio_send_location(from_number, s),
@@ -1425,6 +1647,7 @@ def _procesar_twilio(from_number: str, session_id: str, text: str):
 
 
 # ── Webhook de inventario (Tango / CRM) ─────────────────────
+
 
 @app.route("/webhook/inventario", methods=["POST"])
 def inventario_webhook():
@@ -1441,7 +1664,9 @@ def inventario_webhook():
       }
     """
     secret_recibido = request.headers.get("X-Webhook-Secret", "")
-    if INVENTORY_WEBHOOK_SECRET and not hmac.compare_digest(secret_recibido, INVENTORY_WEBHOOK_SECRET):
+    if INVENTORY_WEBHOOK_SECRET and not hmac.compare_digest(
+        secret_recibido, INVENTORY_WEBHOOK_SECRET
+    ):
         logger.warning("Webhook inventario: secret inválido")
         return jsonify({"error": "Unauthorized"}), 401
 
@@ -1453,7 +1678,7 @@ def inventario_webhook():
     fuente = str(data.get("fuente", "externo"))[:50]
     resultados = sincronizar_inventario(productos)
 
-    ok_count  = sum(1 for r in resultados if r.get("ok"))
+    ok_count = sum(1 for r in resultados if r.get("ok"))
     err_count = len(resultados) - ok_count
     logger.info(f"Inventario actualizado desde '{fuente}': {ok_count} OK, {err_count} errores")
 
@@ -1464,7 +1689,8 @@ def inventario_webhook():
                 continue
             for upd in r.get("actualizados", []):
                 cambios = upd["cambios"]
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO inventario_overrides
                         (neumatico_id, stock, precio, precio_anterior, actualizado, fuente)
                     VALUES (?, ?, ?, ?, datetime('now', 'localtime'), ?)
@@ -1474,13 +1700,15 @@ def inventario_webhook():
                         precio_anterior = COALESCE(excluded.precio_anterior, inventario_overrides.precio_anterior),
                         actualizado     = excluded.actualizado,
                         fuente          = excluded.fuente
-                """, (
-                    upd["id"],
-                    cambios.get("stock"),
-                    cambios.get("precio"),
-                    cambios.get("precio_anterior"),
-                    fuente,
-                ))
+                """,
+                    (
+                        upd["id"],
+                        cambios.get("stock"),
+                        cambios.get("precio"),
+                        cambios.get("precio_anterior"),
+                        fuente,
+                    ),
+                )
         conn.commit()
 
     if ok_count:
@@ -1495,15 +1723,16 @@ def inventario_webhook():
             lineas.append(f"  ⚠ {err_count} producto(s) no encontrado(s)")
         _enviar_notificacion("\n".join(lineas))
 
-    return jsonify({
-        "ok":        ok_count,
-        "errores":   err_count,
-        "resultados": resultados,
-    })
+    return jsonify(
+        {
+            "ok": ok_count,
+            "errores": err_count,
+            "resultados": resultados,
+        }
+    )
 
 
 # ── Dashboard ────────────────────────────────────────────────
-
 
 
 def _msg_count(mensajes_json: str) -> int:
@@ -1540,14 +1769,14 @@ def _metricas_data() -> dict:
             WHERE actualizado >= datetime('now', 'localtime', '-2 hours')
         """).fetchone()[0]
     return {
-        "presupuestos_hoy":    hoy[0],
-        "total_hoy":           hoy[1],
+        "presupuestos_hoy": hoy[0],
+        "total_hoy": hoy[1],
         "presupuestos_semana": semana[0],
-        "total_semana":        semana[1],
-        "presupuestos_mes":    mes[0],
-        "total_mes":           mes[1],
-        "chats_activos":       chats_activos,
-        "por_agente":          [{"agente": r[0], "chats": r[1]} for r in agentes_activos],
+        "total_semana": semana[1],
+        "presupuestos_mes": mes[0],
+        "total_mes": mes[1],
+        "chats_activos": chats_activos,
+        "por_agente": [{"agente": r[0], "chats": r[1]} for r in agentes_activos],
     }
 
 
@@ -1559,15 +1788,18 @@ def _chats_data() -> list:
             WHERE actualizado >= datetime('now', 'localtime', '-2 hours')
             ORDER BY actualizado DESC LIMIT 50
         """).fetchall()
-    return [{
-        "session_id":  r[0],
-        "agente":      r[1] or "—",
-        "canal":       r[2] or "web",
-        "actualizado": r[3],
-        "mensajes":    _msg_count(r[4]),
-        "debug":       bool(r[5]),
-        "escalado":    bool(r[6]),
-    } for r in rows]
+    return [
+        {
+            "session_id": r[0],
+            "agente": r[1] or "—",
+            "canal": r[2] or "web",
+            "actualizado": r[3],
+            "mensajes": _msg_count(r[4]),
+            "debug": bool(r[5]),
+            "escalado": bool(r[6]),
+        }
+        for r in rows
+    ]
 
 
 def _logs_data() -> list:
@@ -1579,18 +1811,21 @@ def _logs_data() -> list:
             WHERE actualizado >= datetime('now', 'localtime', '-7 days')
             ORDER BY actualizado DESC LIMIT 200
         """).fetchall()
-    return [{
-        "conversation_id": r[0],
-        "session_id":      r[1],
-        "agente":          r[2] or "—",
-        "canal":           r[3] or "web",
-        "actualizado":     r[4],
-        "mensajes":        _msg_count(r[5]),
-        "modelo":          r[6] or "—",
-        "temperatura":     r[7],
-        "prompt_version":  r[8] or "—",
-        "debug":           bool(r[9]),
-    } for r in rows]
+    return [
+        {
+            "conversation_id": r[0],
+            "session_id": r[1],
+            "agente": r[2] or "—",
+            "canal": r[3] or "web",
+            "actualizado": r[4],
+            "mensajes": _msg_count(r[5]),
+            "modelo": r[6] or "—",
+            "temperatura": r[7],
+            "prompt_version": r[8] or "—",
+            "debug": bool(r[9]),
+        }
+        for r in rows
+    ]
 
 
 @app.route("/api/dashboard/metricas")
@@ -1613,7 +1848,7 @@ def dashboard_chat_view(session_id):
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
             "SELECT mensajes, agente, canal, actualizado FROM historiales WHERE session_id = ?",
-            (session_id,)
+            (session_id,),
         ).fetchone()
     if not row:
         return jsonify({"mensajes": [], "agente": "—", "canal": "web", "actualizado": None})
@@ -1621,7 +1856,9 @@ def dashboard_chat_view(session_id):
         msgs = json.loads(row[0] or "[]")
     except Exception:
         msgs = []
-    return jsonify({"mensajes": msgs, "agente": row[1] or "—", "canal": row[2] or "web", "actualizado": row[3]})
+    return jsonify(
+        {"mensajes": msgs, "agente": row[1] or "—", "canal": row[2] or "web", "actualizado": row[3]}
+    )
 
 
 @app.route("/api/dashboard/conversation/<conversation_id>")
@@ -1629,24 +1866,37 @@ def dashboard_conversation_view(conversation_id):
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
             "SELECT mensajes, agente, canal, actualizado, modelo, temperatura, prompt_version, debug FROM conversations WHERE conversation_id = ?",
-            (conversation_id,)
+            (conversation_id,),
         ).fetchone()
     if not row:
-        return jsonify({"mensajes": [], "agente": "—", "canal": "web", "actualizado": None, "modelo": "—", "temperatura": None, "prompt_version": "—", "debug": False})
+        return jsonify(
+            {
+                "mensajes": [],
+                "agente": "—",
+                "canal": "web",
+                "actualizado": None,
+                "modelo": "—",
+                "temperatura": None,
+                "prompt_version": "—",
+                "debug": False,
+            }
+        )
     try:
         msgs = json.loads(row[0] or "[]")
     except Exception:
         msgs = []
-    return jsonify({
-        "mensajes":       msgs,
-        "agente":         row[1] or "—",
-        "canal":          row[2] or "web",
-        "actualizado":    row[3],
-        "modelo":         row[4] or "—",
-        "temperatura":    row[5],
-        "prompt_version": row[6] or "—",
-        "debug":          bool(row[7]),
-    })
+    return jsonify(
+        {
+            "mensajes": msgs,
+            "agente": row[1] or "—",
+            "canal": row[2] or "web",
+            "actualizado": row[3],
+            "modelo": row[4] or "—",
+            "temperatura": row[5],
+            "prompt_version": row[6] or "—",
+            "debug": bool(row[7]),
+        }
+    )
 
 
 @app.route("/api/debug-session", methods=["GET"])
@@ -1669,11 +1919,25 @@ def dashboard_ventas():
             SELECT id, agente, marca, modelo, medida, cantidad, total, sucursal, cliente, fecha
             FROM ventas ORDER BY fecha DESC LIMIT 200
         """).fetchall()
-    return jsonify({"ventas": [{
-        "id":       r[0], "agente": r[1] or "—", "marca": r[2], "modelo": r[3], "medida": r[4],
-        "cantidad": r[5], "total":  r[6], "sucursal": r[7] or "—",
-        "cliente":  r[8] or "—", "fecha": r[9],
-    } for r in rows]})
+    return jsonify(
+        {
+            "ventas": [
+                {
+                    "id": r[0],
+                    "agente": r[1] or "—",
+                    "marca": r[2],
+                    "modelo": r[3],
+                    "medida": r[4],
+                    "cantidad": r[5],
+                    "total": r[6],
+                    "sucursal": r[7] or "—",
+                    "cliente": r[8] or "—",
+                    "fecha": r[9],
+                }
+                for r in rows
+            ]
+        }
+    )
 
 
 @app.route("/api/dashboard/sesion/<session_id>/resolver", methods=["POST"])
@@ -1690,7 +1954,7 @@ def dashboard_stream():
             try:
                 payload = {
                     "metricas": _metricas_data(),
-                    "chats":    _chats_data(),
+                    "chats": _chats_data(),
                 }
                 yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 time.sleep(4)
@@ -1699,10 +1963,15 @@ def dashboard_stream():
             except Exception as e:
                 logger.error(f"SSE error: {e}")
                 time.sleep(4)
+
     return Response(
         stream_with_context(generate()),
         mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
 
 
@@ -1710,13 +1979,17 @@ def dashboard_stream():
 def dashboard_descargar_ventas():
     import io
     from datetime import datetime as dt
+
     venta_id = request.args.get("id", type=int)
     with sqlite3.connect(DB_PATH) as conn:
         if venta_id:
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT fecha, agente, marca, modelo, medida, cantidad, total, sucursal, cliente
                 FROM ventas WHERE id = ?
-            """, (venta_id,)).fetchall()
+            """,
+                (venta_id,),
+            ).fetchall()
         else:
             rows = conn.execute("""
                 SELECT fecha, agente, marca, modelo, medida, cantidad, total, sucursal, cliente
@@ -1747,15 +2020,19 @@ def dashboard_descargar_ventas():
 def dashboard_descargar_logs():
     import io
     from datetime import datetime as dt
+
     conv_filter = request.args.get("conversation")
     with sqlite3.connect(DB_PATH) as conn:
         if conv_filter:
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT conversation_id, agente, canal, actualizado, mensajes,
                        modelo, temperatura, prompt_version, debug,
                        confianza, contexto, memoria, logica_negocio
                 FROM conversations WHERE conversation_id = ?
-            """, (conv_filter,)).fetchall()
+            """,
+                (conv_filter,),
+            ).fetchall()
         else:
             rows = conn.execute("""
                 SELECT conversation_id, agente, canal, actualizado, mensajes,
@@ -1768,29 +2045,47 @@ def dashboard_descargar_logs():
     buf = io.StringIO()
     sep = "=" * 72
     for r in rows:
-        conv_id, agente, canal, actualizado, mensajes_raw, \
-            modelo, temperatura, prompt_version, debug, \
-            confianza, contexto, memoria, logica_negocio = r
+        (
+            conv_id,
+            agente,
+            canal,
+            actualizado,
+            mensajes_raw,
+            modelo,
+            temperatura,
+            prompt_version,
+            debug,
+            confianza,
+            contexto,
+            memoria,
+            logica_negocio,
+        ) = r
         try:
             msgs = json.loads(mensajes_raw or "[]")
         except Exception:
             msgs = []
         buf.write(sep + "\n")
         buf.write(f"CONVERSACIÓN : {conv_id}\n")
-        buf.write(f"AGENTE : {agente or '—'}  |  CANAL: {canal or 'web'}  |  FECHA: {actualizado or '—'}\n")
+        buf.write(
+            f"AGENTE : {agente or '—'}  |  CANAL: {canal or 'web'}  |  FECHA: {actualizado or '—'}\n"
+        )
         debug_str = "  |  DEBUG: SI" if debug else ""
-        buf.write(f"MODELO : {modelo or '—'}  |  TEMP: {temperatura if temperatura is not None else '—'}  |  PROMPT: {prompt_version or '—'}{debug_str}\n")
-        buf.write(f"CONFIANZA : {confianza or '—'}  |  CONTEXTO: {contexto or '—'} tokens  |  MEMORIA: {memoria if memoria is not None else '—'} msgs\n")
+        buf.write(
+            f"MODELO : {modelo or '—'}  |  TEMP: {temperatura if temperatura is not None else '—'}  |  PROMPT: {prompt_version or '—'}{debug_str}\n"
+        )
+        buf.write(
+            f"CONFIANZA : {confianza or '—'}  |  CONTEXTO: {contexto or '—'} tokens  |  MEMORIA: {memoria if memoria is not None else '—'} msgs\n"
+        )
         buf.write(f"LÓGICA    : {logica_negocio or '—'}\n")
         buf.write(sep + "\n")
         for msg in msgs:
-            rol       = "Cliente" if msg.get("role") == "user" else (agente or "Agente")
+            rol = "Cliente" if msg.get("role") == "user" else (agente or "Agente")
             contenido = msg.get("content", "").strip().replace("\n", "\n         ")
             buf.write(f"  [{rol}]  {contenido}\n\n")
         buf.write("\n")
-    fecha  = dt.now().strftime("%Y%m%d_%H%M")
+    fecha = dt.now().strftime("%Y%m%d_%H%M")
     sufijo = f"_{conv_filter[:8]}" if conv_filter else f"_{fecha}"
-    resp   = app.response_class(response=buf.getvalue(), mimetype="text/plain; charset=utf-8")
+    resp = app.response_class(response=buf.getvalue(), mimetype="text/plain; charset=utf-8")
     resp.headers["Content-Disposition"] = f'attachment; filename="conversacion{sufijo}.log"'
     return resp
 
@@ -1815,10 +2110,15 @@ def server_logs_stream():
                     last_n = new[-1]["n"]
             except GeneratorExit:
                 break
+
     return Response(
         stream_with_context(generate()),
         mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
 
 
@@ -1833,7 +2133,7 @@ if __name__ == "__main__":
     else:
         print(f"  AVISO: {mensaje}")
 
-    print(f"\n  API escuchando en: http://localhost:5000")
+    print("\n  API escuchando en: http://localhost:5000")
     print("  Inicia el frontend con: node server.js")
     print("=" * 60 + "\n")
 

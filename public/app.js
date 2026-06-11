@@ -137,7 +137,7 @@ async function _flushQueue() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mensaje: mensajeCombinado }),
-      signal: abortController.signal,
+      signal: abortController.signal
     });
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -182,7 +182,7 @@ async function _flushQueue() {
     if (err.name === 'AbortError') return;
     if (_typingId) { quitarTyping(_typingId); _typingId = null; }
     document.querySelectorAll('[id^="typing-"]').forEach(el => el.remove());
-    agregarMensaje("Disculpá, se cortó la conexión un momento. ¿Me repetís lo que necesitabas?", 'bot');
+    agregarMensaje('Disculpá, se cortó la conexión un momento. ¿Me repetís lo que necesitabas?', 'bot');
     abortController = null;
   }
 }
