@@ -9,10 +9,22 @@ export default [
     ]
   },
   {
-    files: ["**/*.js"],
+    files: ["public/**/*.js"],
     languageOptions: {
       ecmaVersion: 2020,
       globals: { ...globals.browser, ...globals.node },
+      sourceType: "module"
+    },
+    rules: {
+      "no-unused-vars": "off",
+      "no-undef": "error"
+    }
+  },
+  {
+    files: ["server.js"],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: { ...globals.node },
       sourceType: "module"
     },
     rules: {
