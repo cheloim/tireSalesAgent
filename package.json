@@ -1,14 +1,21 @@
 {
   "name": "neumaticos-martinez-frontend",
   "version": "1.0.0",
-  "description": "Neumáticos Martinez – Servidor frontend Node.js",
+  "type": "module",
+  "description": "Neum ticos Martinez - Servidor frontend Node.js",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "lint": "eslint server.js public/",
+    "lint:html": "htmlhint public/*.html"
   },
   "dependencies": {
     "express": "^4.19.2",
     "http-proxy-middleware": "^3.0.3"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "htmlhint": "^1.1.0"
   }
 }

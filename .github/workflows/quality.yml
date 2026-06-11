@@ -1,0 +1,88 @@
+name: Code Quality
+
+on:
+  pull_request:
+    paths:
+      - '**.py'
+      - '**.js'
+      - '**.html'
+      - '**.sh'
+      - '.github/workflows/quality.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - '**.py'
+      - '**.js'
+      - '**.html'
+      - '**.sh'
+      - '.github/workflows/quality.yml'
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install ruff mypy
+
+      - name: Lint with ruff
+        run: ruff check .
+
+      - name: Check formatting
+        run: ruff format --check .
+
+      - name: Type check with mypy
+        run: mypy app.py agent.py tools.py inventory.py constants.py --ignore-missing-imports
+
+  javascript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install ESLint
+        run: npm install --save-dev eslint
+
+      - name: Lint JS
+        run: npx eslint server.js public/ --max-warnings=0
+
+  html:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install HTMLHint
+        run: npm install --save-dev htmlhint
+
+      - name: Lint HTML
+        run: npx htmlhint public/*.html
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck
+
+      - name: Lint shell scripts
+        run: |
+          find . -name '*.sh' -not -path './node_modules/*' -not -path './.venv/*' -exec shellcheck {} +

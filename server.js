@@ -20,8 +20,8 @@ app.use(
     on: {
       proxyRes(proxyRes) {
         proxyRes.headers['x-accel-buffering'] = 'no';
-      },
-    },
+      }
+    }
   })
 );
 
@@ -35,7 +35,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
     if (filePath.endsWith('index.html')) {
       res.setHeader('Cache-Control', 'no-cache');
     }
-  },
+  }
 }));
 
 // ── Named routes ─────────────────────────────────────────────
