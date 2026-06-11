@@ -1,0 +1,54 @@
+version: "3.8"
+
+services:
+  backend:
+    image: ghcr.io/cheloim/tiresalesagent/backend:latest
+    restart: always
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    volumes:
+      - ./conversaciones.db:/app/conversaciones.db
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5000/api/estado"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  frontend:
+    image: ghcr.io/cheloim/tiresalesagent/frontend:latest
+    restart: always
+    ports:
+      - "8080:8080"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    restart: always
+    ports:
+      - "4040:4040"
+    command:
+      - "http"
+      - "backend:5000"
+      - "--authtoken=${NGROK_AUTHTOKEN}"
+    depends_on:
+      - backend
