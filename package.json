@@ -1,6 +1,7 @@
 {
   "name": "neumaticos-martinez-frontend",
   "version": "1.0.0",
+  "type": "module",
   "description": "Neum ticos Martinez - Servidor frontend Node.js",
   "main": "server.js",
   "scripts": {

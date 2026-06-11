@@ -426,9 +426,13 @@ def procesar_mensaje(
                 ultimo_chunk = chunk
                 try:
                     candidates = chunk.candidates or []
-                    if candidates and candidates[0].content and candidates[0].content.parts:
-                        if any(getattr(p, "thought", False) for p in candidates[0].content.parts):
-                            continue
+                    if (
+                        candidates
+                        and candidates[0].content
+                        and candidates[0].content.parts
+                        and any(getattr(p, "thought", False) for p in candidates[0].content.parts)
+                    ):
+                        continue
                 except Exception:
                     pass
                 delta = chunk.text or ""

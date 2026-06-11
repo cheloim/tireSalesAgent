@@ -121,7 +121,7 @@ async function resolverEscalado(session_id) {
   try {
     const res = await apiFetch(`/api/dashboard/sesion/${encodeURIComponent(session_id)}/resolver`, { method: 'POST' });
     if (!res.ok) { console.error('resolver', await res.text()); }
-  } catch(e) { console.error('resolver', e); }
+  } catch (e) { console.error('resolver', e); }
 }
 
 // ── SSE dashboard ─────────────────────────────────────────────
@@ -200,7 +200,7 @@ async function actualizarDrawer() {
     _renderDrawerMsgs(data.mensajes, true);
     document.getElementById('drawer-updated').textContent =
       'Updated ' + new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  } catch(e) { console.error('drawer', e); }
+  } catch (e) { console.error('drawer', e); }
 }
 
 async function _cargarConversacion(conversation_id) {
@@ -209,7 +209,7 @@ async function _cargarConversacion(conversation_id) {
     _renderDrawerMsgs(data.mensajes, false);
     document.getElementById('drawer-updated').textContent =
       data.actualizado ? tiempoAtras(data.actualizado) : '';
-  } catch(e) { console.error('log drawer', e); }
+  } catch (e) { console.error('log drawer', e); }
 }
 
 function _renderDrawerMsgs(mensajes, autoScroll) {
@@ -217,11 +217,11 @@ function _renderDrawerMsgs(mensajes, autoScroll) {
   const wasAtBottom = msgs.scrollHeight - msgs.scrollTop <= msgs.clientHeight + 40;
   msgs.innerHTML = mensajes.length
     ? mensajes.map(m => {
-        const isUser = m.role === 'user';
-        return `<div class="drawer-msg ${isUser ? 'drawer-msg-user' : 'drawer-msg-agent'}">
-          <div class="drawer-bubble">${(m.content || '').replace(/\n/g, '<br>')}</div>
-        </div>`;
-      }).join('')
+      const isUser = m.role === 'user';
+      return `<div class="drawer-msg ${isUser ? 'drawer-msg-user' : 'drawer-msg-agent'}">
+        <div class="drawer-bubble">${(m.content || '').replace(/\n/g, '<br>')}</div>
+      </div>`;
+    }).join('')
     : '<div class="empty" style="padding:2rem">No messages</div>';
   if (autoScroll && wasAtBottom) msgs.scrollTop = msgs.scrollHeight;
   else if (!autoScroll) msgs.scrollTop = msgs.scrollHeight;
