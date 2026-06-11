@@ -48,7 +48,9 @@ jobs:
           echo "=== Clonar / Pull repo ==="
           if [ -d "$REPO_DIR/.git" ]; then
             cd "$REPO_DIR"
+            git stash push -m "deploy-$(date +%s)" || true
             git pull origin "$REPO_BRANCH"
+            git stash drop || true
           else
             git clone "$REPO_URL" "$REPO_DIR"
             cd "$REPO_DIR"
