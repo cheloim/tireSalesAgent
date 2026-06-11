@@ -30,7 +30,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install ruff mypy types-python-dotenv
+          pip install ruff mypy
 
       - name: Lint with ruff
         run: ruff check .
@@ -85,5 +85,4 @@ jobs:
 
       - name: Lint shell scripts
         run: |
-          find . -name '*.sh' -not -path './node_modules/*' -not -path './.venv/*' -exec shellcheck -S SC1091 {} + || true
-          shellcheck -S SRC deploy/*.sh setup_service.sh start.sh || true
+          find . -name '*.sh' -not -path './node_modules/*' -not -path './.venv/*' -exec shellcheck {} +
