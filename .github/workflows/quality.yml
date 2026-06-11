@@ -8,14 +8,6 @@ on:
       - '**.html'
       - '**.sh'
       - '.github/workflows/quality.yml'
-  push:
-    branches: [ main ]
-    paths:
-      - '**.py'
-      - '**.js'
-      - '**.html'
-      - '**.sh'
-      - '.github/workflows/quality.yml'
 
 jobs:
   python:
