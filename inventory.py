@@ -309,9 +309,9 @@ TARIFA_DESECHO = 500.00
 def actualizar_stock(neumatico_id: str, cantidad: int) -> dict:
     for n in NEUMATICOS:
         if n["id"] == neumatico_id:
-            if n["stock"] < cantidad:
+            if n["stock"] < cantidad:  # type: ignore[operator]
                 return {"ok": False, "error": f"Stock insuficiente ({n['stock']} disponibles)"}
-            n["stock"] -= cantidad
+            n["stock"] -= cantidad  # type: ignore[operator]
             return {"ok": True, "stock_restante": n["stock"]}
     return {"ok": False, "error": "Neumático no encontrado"}
 

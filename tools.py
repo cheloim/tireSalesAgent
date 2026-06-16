@@ -264,13 +264,13 @@ def generar_presupuesto(
             ensure_ascii=False,
         )
 
-    precio_unitario = neumatico["precio"]  # type: ignore[operator]
-    precio_transferencia = round(precio_unitario * (1 - DESCUENTO_TRANSFERENCIA), 2)
-    cuota_tres = round(precio_unitario / 3, 2)
-    cuota_seis = round(precio_unitario / 6, 2)
+    precio_unitario: float = neumatico["precio"]  # type: ignore[assignment]
+    precio_transferencia: float = round(precio_unitario * (1 - DESCUENTO_TRANSFERENCIA), 2)
+    cuota_tres: float = round(precio_unitario / 3, 2)
+    cuota_seis: float = round(precio_unitario / 6, 2)
 
-    subtotal_neumaticos = precio_unitario * cantidad
-    subtotal_neumaticos_transferencia = precio_transferencia * cantidad
+    subtotal_neumaticos: float = precio_unitario * cantidad
+    subtotal_neumaticos_transferencia: float = precio_transferencia * cantidad
     subtotal_instalacion = 0.0
     desglose_instalacion = None
 
