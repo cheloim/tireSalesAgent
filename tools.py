@@ -7,6 +7,7 @@ import time
 
 from inventory import (
     COMPATIBILIDAD_VEHICULOS,
+    DESCUENTO_TRANSFERENCIA,
     NEUMATICOS,
     TARIFA_BALANCEO,
     TARIFA_DESECHO,
@@ -263,7 +264,13 @@ def generar_presupuesto(
             ensure_ascii=False,
         )
 
-    subtotal_neumaticos = neumatico["precio"] * cantidad  # type: ignore[operator]
+    precio_unitario = neumatico["precio"]  # type: ignore[operator]
+    precio_transferencia = round(precio_unitario * (1 - DESCUENTO_TRANSFERENCIA), 2)
+    cuota_tres = round(precio_unitario / 3, 2)
+    cuota_seis = round(precio_unitario / 6, 2)
+
+    subtotal_neumaticos = precio_unitario * cantidad
+    subtotal_neumaticos_transferencia = precio_transferencia * cantidad
     subtotal_instalacion = 0.0
     desglose_instalacion = None
 
@@ -276,6 +283,7 @@ def generar_presupuesto(
         }
 
     total = subtotal_neumaticos + subtotal_instalacion
+    total_transferencia = subtotal_neumaticos_transferencia + subtotal_instalacion
 
     return json.dumps(
         {
@@ -288,14 +296,20 @@ def generar_presupuesto(
                     "tipo": neumatico["tipo"],
                 },
                 "cantidad": cantidad,
-                "precio_unitario": neumatico["precio"],
+                "precio_unitario": precio_unitario,
+                "precio_transferencia": precio_transferencia,
+                "cuota_tres": cuota_tres,
+                "cuota_seis": cuota_seis,
                 "subtotal_neumaticos": round(subtotal_neumaticos, 2),
+                "subtotal_neumaticos_transferencia": round(subtotal_neumaticos_transferencia, 2),
                 "incluir_instalacion": incluir_instalacion,
                 "subtotal_instalacion": round(subtotal_instalacion, 2),
                 "desglose_instalacion": desglose_instalacion,
                 "total": round(total, 2),
+                "total_transferencia": round(total_transferencia, 2),
                 "envio": None if incluir_instalacion else "Gratis a todo el país",
-                "cuotas": f"Hasta 6 cuotas sin interés de ${round(total / 6, 2):,.2f}",
+                "cuota_tres_total": round(total / 3, 2),
+                "cuota_seis_total": round(total / 6, 2),
             }
         },
         ensure_ascii=False,
