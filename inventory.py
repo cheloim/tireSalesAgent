@@ -1,5 +1,7 @@
 """Inventario de neumáticos – Neumáticos Martinez (datos reales del sitio)."""
 
+DESCUENTO_TRANSFERENCIA = 0.10  # 10% para efectivo/transferencia
+
 NEUMATICOS = [
     {
         "id": "N001",
@@ -11,7 +13,7 @@ NEUMATICOS = [
         "tipo": "Turismo",
         "temporada": "Todo el Año",
         "precio": 140090.00,
-        "precio_anterior": 175049.00,
+        "precio_anterior": 210059.00,
         "stock": 8,
         "profundidad_dibujo": '8/32"',
         "garantia_km": 80000,
@@ -32,7 +34,7 @@ NEUMATICOS = [
         "tipo": "Turismo",
         "temporada": "Todo el Año",
         "precio": 165747.00,
-        "precio_anterior": 186712.00,
+        "precio_anterior": 224054.00,
         "stock": 8,
         "profundidad_dibujo": '8/32"',
         "garantia_km": 80000,
@@ -53,7 +55,7 @@ NEUMATICOS = [
         "tipo": "Turismo",
         "temporada": "Todo el Año",
         "precio": 160371.00,
-        "precio_anterior": 188020.00,
+        "precio_anterior": 225624.00,
         "stock": 12,
         "profundidad_dibujo": '8/32"',
         "garantia_km": 80000,
@@ -74,7 +76,7 @@ NEUMATICOS = [
         "tipo": "Turismo",
         "temporada": "Todo el Año",
         "precio": 174261.00,
-        "precio_anterior": 186032.00,
+        "precio_anterior": 223238.00,
         "stock": 12,
         "profundidad_dibujo": '8/32"',
         "garantia_km": 80000,
@@ -95,7 +97,7 @@ NEUMATICOS = [
         "tipo": "Turismo",
         "temporada": "Todo el Año",
         "precio": 181193.00,
-        "precio_anterior": 194921.00,
+        "precio_anterior": 233905.00,
         "stock": 10,
         "profundidad_dibujo": '8/32"',
         "garantia_km": 80000,
@@ -116,7 +118,7 @@ NEUMATICOS = [
         "tipo": "Turismo",
         "temporada": "Todo el Año",
         "precio": 225068.00,
-        "precio_anterior": 242874.00,
+        "precio_anterior": 291449.00,
         "stock": 12,
         "profundidad_dibujo": '8/32"',
         "garantia_km": 80000,
@@ -137,7 +139,7 @@ NEUMATICOS = [
         "tipo": "Turismo",
         "temporada": "Todo el Año",
         "precio": 183592.00,
-        "precio_anterior": 205998.00,
+        "precio_anterior": 247198.00,
         "stock": 8,
         "profundidad_dibujo": '8/32"',
         "garantia_km": 80000,
@@ -158,7 +160,7 @@ NEUMATICOS = [
         "tipo": "Turismo",
         "temporada": "Todo el Año",
         "precio": 187264.00,
-        "precio_anterior": 205998.00,
+        "precio_anterior": 247198.00,
         "stock": 9,
         "profundidad_dibujo": '8/32"',
         "garantia_km": 80000,
@@ -179,7 +181,7 @@ NEUMATICOS = [
         "tipo": "Turismo Alto Rendimiento",
         "temporada": "Todo el Año",
         "precio": 253136.00,
-        "precio_anterior": 258987.00,
+        "precio_anterior": 310784.00,
         "stock": 4,
         "profundidad_dibujo": '8/32"',
         "garantia_km": 72000,
@@ -200,7 +202,7 @@ NEUMATICOS = [
         "tipo": "Turismo Alto Rendimiento",
         "temporada": "Todo el Año",
         "precio": 276883.00,
-        "precio_anterior": 291005.00,
+        "precio_anterior": 349206.00,
         "stock": 12,
         "profundidad_dibujo": '8/32"',
         "garantia_km": 72000,
@@ -221,7 +223,7 @@ NEUMATICOS = [
         "tipo": "SUV / Crossover",
         "temporada": "Todo el Año",
         "precio": 326425.00,
-        "precio_anterior": 362695.00,
+        "precio_anterior": 435234.00,
         "stock": 4,
         "profundidad_dibujo": '10/32"',
         "garantia_km": 96000,
@@ -243,7 +245,7 @@ NEUMATICOS = [
         "temporada": "Todo el Año",
         "precio": 382307.00,
         "precio_anterior": 642363.00,
-        "stock": 4,
+        "stock": 0,
         "profundidad_dibujo": '10/32"',
         "garantia_km": 64000,
         "descripcion": "Neumático Run-Flat que permite continuar rodando hasta 80 km sin aire a 80 km/h. Tecnología de pared lateral reforzada.",
@@ -299,9 +301,9 @@ COMPATIBILIDAD_VEHICULOS = {
 }
 
 # Tarifas de servicios (en pesos argentinos)
-TARIFA_INSTALACION = 3000.00  # por neumático
-TARIFA_BALANCEO = 2000.00  # por neumático
-TARIFA_DESECHO = 500.00  # por neumático
+TARIFA_INSTALACION = 3000.00
+TARIFA_BALANCEO = 2000.00
+TARIFA_DESECHO = 500.00
 
 
 def actualizar_stock(neumatico_id: str, cantidad: int) -> dict:
@@ -329,7 +331,6 @@ def sincronizar_inventario(actualizaciones: list[dict]) -> list[dict]:
     campos_permitidos = {"stock", "precio", "precio_anterior"}
 
     for item in actualizaciones:
-        # Buscar el neumático por id o por medida
         candidatos = []
         if "id" in item:
             candidatos = [n for n in NEUMATICOS if n["id"] == item["id"]]
