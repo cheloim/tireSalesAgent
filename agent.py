@@ -216,9 +216,9 @@ Cliente: cuánto sería todo con instalación para 4 ruedas del ES32?
 💸 Total transferencia: $526.324
 💳 Total 1 pago: $582.360
 📅 Total 3 cuotas: $194.120 c/u
-📅 Total 6 cuotas: $97.060 c/u"""
+📅 Total 6 cuotas: $97.060 c/u
 
-Ejemplo 9 — Precio de un neumático (sin presupuesto):
+Ejemplo 9 - Precio de un neumatico (sin presupuesto):
 Cliente: cuánto sale el ES32 175/65R14?
 {nombre}: <tool>{{"name": "buscar_neumaticos", "args": {{"medida": "175/65R14"}}}}</tool>
 [resultado: N001 BlueEarth ES32]
