@@ -353,7 +353,12 @@ def obtener_historial(session_id: str) -> tuple[list[dict], int]:
         if not row:
             return [], 0
         mensajes = json.loads(row[0])
-        segundos = int(time.time() - float(row[1])) if row[1] else 0
+        if not row[1]:
+            segundos = 0
+        elif isinstance(row[1], str) and "-" in row[1]:
+            segundos = int(time.time() - datetime.fromisoformat(row[1]).timestamp())
+        else:
+            segundos = int(time.time() - float(row[1]))
         return mensajes, segundos
 
 
