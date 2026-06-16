@@ -91,7 +91,7 @@ def buscar_neumaticos(
 
     salida = []
     for n in resultados:
-        precio = n["precio"]  # type: ignore[assignment]
+        precio: float = n["precio"]  # type: ignore[assignment]
         salida.append(
             {
                 "id": n["id"],
@@ -115,7 +115,7 @@ def ver_detalle_neumatico(neumatico_id: str, session_id: str = "default") -> str
     neumatico = next((n for n in NEUMATICOS if n["id"] == neumatico_id), None)
     if not neumatico:
         return _error_neumatico_no_encontrado(neumatico_id)
-    precio = neumatico["precio"]  # type: ignore[assignment]
+    precio: float = neumatico["precio"]  # type: ignore[assignment]
     detalle = neumatico.copy()
     detalle["precio_transferencia"] = round(precio * (1 - DESCUENTO_TRANSFERENCIA), 2)
     detalle["cuota_tres"] = round(precio / 3, 2)
