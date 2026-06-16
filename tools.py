@@ -91,6 +91,7 @@ def buscar_neumaticos(
 
     salida = []
     for n in resultados:
+        precio: float = n["precio"]  # type: ignore[assignment]
         salida.append(
             {
                 "id": n["id"],
@@ -99,7 +100,10 @@ def buscar_neumaticos(
                 "medida": n["medida"],
                 "tipo": n["tipo"],
                 "temporada": n["temporada"],
-                "precio": n["precio"],
+                "precio": precio,
+                "precio_transferencia": round(precio * (1 - DESCUENTO_TRANSFERENCIA), 2),
+                "cuota_tres": round(precio / 3, 2),
+                "cuota_seis": round(precio / 6, 2),
                 "stock": n["stock"],
                 "garantia_km": n["garantia_km"],
             }
@@ -111,7 +115,12 @@ def ver_detalle_neumatico(neumatico_id: str, session_id: str = "default") -> str
     neumatico = next((n for n in NEUMATICOS if n["id"] == neumatico_id), None)
     if not neumatico:
         return _error_neumatico_no_encontrado(neumatico_id)
-    return json.dumps(neumatico, ensure_ascii=False)
+    precio: float = neumatico["precio"]  # type: ignore[assignment]
+    detalle = neumatico.copy()
+    detalle["precio_transferencia"] = round(precio * (1 - DESCUENTO_TRANSFERENCIA), 2)
+    detalle["cuota_tres"] = round(precio / 3, 2)
+    detalle["cuota_seis"] = round(precio / 6, 2)
+    return json.dumps(detalle, ensure_ascii=False)
 
 
 def verificar_compatibilidad(vehiculo: str, medida: str, session_id: str = "default") -> str:
