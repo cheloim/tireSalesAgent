@@ -1,0 +1,45 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    volumes:
+      - ./conversaciones.db:/app/conversaciones.db
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5000/api/estado"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "8080:8080"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    restart: unless-stopped
+    command:
+      - "http"
+      - "backend:5000"
+      - "--domain=${NGROK_DOMAIN:-}"
+      - "--authtoken=${NGROK_AUTHTOKEN}"
+    ports:
+      - "4040:4040"
+    depends_on:
+      - backend
